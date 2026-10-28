@@ -1,0 +1,6 @@
+{
+  "name": "AI Literacy Lab — Verification-First Model",
+  "description": "Platform pembelajaran literasi AI berbasis bukti (Verification-First) melalui siklus Learn, Challenge, dan 4 tahap Verify untuk mendukung Asta Cita Nusantara Poin 4.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="id" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI LITERACY LAB — VERIFICATION-FIRST MODEL</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,600&display=swap" rel="stylesheet" />
+  <style>
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: #020617;
+      color: #f8fafc;
+      overflow-x: hidden;
+    }
+    @keyframes pageEnter {
+      0% { opacity: 0; transform: translateY(14px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes laserScan {
+      0% { top: 0%; opacity: 0.9; }
+      50% { top: 94%; opacity: 1; }
+      100% { top: 0%; opacity: 0.9; }
+    }
+    @keyframes tubeWiggle {
+      0%, 100% { transform: rotate(0deg) scale(1); }
+      20% { transform: rotate(-18deg) scale(1.12); }
+      45% { transform: rotate(16deg) scale(1.15); }
+      70% { transform: rotate(-10deg) scale(1.08); }
+      85% { transform: rotate(6deg) scale(1.04); }
+    }
+    @keyframes modalScaleIn {
+      0% { opacity: 0; transform: scale(0.94) translateY(8px); }
+      100% { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    .animate-page-enter {
+      animation: pageEnter 350ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    .animate-laser-scan {
+      animation: laserScan 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    }
+    .animate-tube-wiggle {
+      animation: tubeWiggle 600ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .animate-modal-in {
+      animation: modalScaleIn 250ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-[#020617] text-slate-100 flex flex-col justify-between antialiased selection:bg-blue-600 selection:text-white">
+
+  <!-- STICKY HEADER / NAVBAR -->
+  <header class="sticky top-0 z-40 w-full bg-[#020617]/85 backdrop-blur-md border-b border-slate-800/80">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-16 sm:h-20 gap-3">
+        <!-- Left Brand -->
+        <div class="flex items-center gap-3 shrink-0">
+          <button id="tube-btn" type="button" onclick="triggerTubeWiggle()" class="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-[#2563eb] hover:bg-[#3b82f6] flex items-center justify-center text-lg sm:text-xl shadow-[0_0_20px_rgba(37,99,235,0.55)] transition-all duration-300 ease-out hover:-translate-y-0.5 active:scale-95 cursor-pointer">
+            <span>🧪</span>
+          </button>
+          <button type="button" onclick="switchTab('beranda')" class="text-left focus:outline-none cursor-pointer">
+            <div class="font-extrabold text-white tracking-wide text-sm sm:text-base leading-tight">AI LITERACY LAB</div>
+            <div class="text-[10px] font-bold text-[#3b82f6] uppercase tracking-widest leading-tight mt-0.5">VERIFICATION-FIRST MODEL</div>
+          </button>
+        </div>
+
+        <!-- Center 5 Navigation Menus -->
+        <nav class="hidden lg:flex items-center gap-6 xl:gap-7 h-full" id="desktop-nav">
+          <button type="button" data-tab="beranda" onclick="switchTab('beranda')" class="nav-btn relative h-full inline-flex items-center px-1 text-sm font-semibold whitespace-nowrap transition-all duration-300 ease-out hover:-translate-y-0.5 active:scale-95 border-b-2 text-[#3b82f6] border-[#3b82f6] cursor-pointer">Beranda</button>
+          <button type="button" data-tab="tanya-ai" onclick="switchTab('tanya-ai')" class="nav-btn relative h-full inline-flex items-center px-1 text-sm font-semibold whitespace-nowrap transition-all duration-300 ease-out hover:-translate-y-0.5 active:scale-95 border-b-2 text-slate-300 hover:text-white border-transparent cursor-pointer">Tanya AI</button>
+          <button type="button" data-tab="uji-output" onclick="switchTab('uji-output')" class="nav-btn relative h-full inline-flex items-center px-1 text-sm font-semibold whitespace-nowrap transition-all duration-300 ease-out hover:-translate-y-0.5 active:scale-95 border-b-2 text-slate-300 hover:text-white border-transparent cursor-pointer">Uji Output AI</button>
+          <button type="button" data-tab="challenge-lab" onclick="switchTab('challenge-lab')" class="nav-btn relative h-full inline-flex items-center px-1 text-sm font-semibold whitespace-nowrap transition-all duration-300 ease-out hover:-translate-y-0.5 active:scale-95 border-b-2 text-slate-300 hover:text-white border-transparent cursor-pointer">Challenge &amp; Lab</button>
+          <button type="button" data-tab="portal-mentor" onclick="switchTab('portal-mentor')" class="nav-btn relative h-full inline-flex items-center px-1 text-sm font-semibold whitespace-nowrap transition-all duration-300 ease-out hover:-translate-y-0.5 active:scale-95 border-b-2 text-[#fbbf24] hover:text-amber-300 border-transparent cursor-pointer" data-mentor="true">👑 Portal Mentor &amp; Asta Cita</button>
+        </nav>
+
+        <!-- Right V-Score Badge -->
+        <div class="flex items-center gap-2 shrink-0">
+          <div id="vscore-badge" class="inline-flex items-center gap-2.5 rounded-full bg-[#0f172a] border border-slate-700/80 px-4 py-1.5 transition-all duration-300">
+            <span class="w-2 h-2 rounded-full bg-[#10b981] animate-pulse shrink-0"></span>
+            <span class="text-xs sm:text-sm font-bold tracking-wider text-slate-200 whitespace-nowrap tabular-nums">
+              V-SCORE: <span id="vscore-number" class="text-[#10b981] font-extrabold">78</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mobile Nav -->
+      <nav class="flex lg:hidden items-center gap-1.5 overflow-x-auto py-2 border-t border-slate-800/60" id="mobile-nav">
+        <button type="button" data-tab="beranda" onclick="switchTab('beranda')" class="m-nav-btn px-3 py-1.5 text-xs font-semibold whitespace-nowrap border-b-2 text-[#3b82f6] border-[#3b82f6]">Beranda</button>
+        <button type="button" data-tab="tanya-ai" onclick="switchTab('tanya-ai')" class="m-nav-btn px-3 py-1.5 text-xs font-semibold whitespace-nowrap border-b-2 text-slate-400 border-transparent">Tanya AI</button>
+        <button type="button" data-tab="uji-output" onclick="switchTab('uji-output')" class="m-nav-btn px-3 py-1.5 text-xs font-semibold whitespace-nowrap border-b-2 text-slate-400 border-transparent">Uji Output AI</button>
+        <button type="button" data-tab="challenge-lab" onclick="switchTab('challenge-lab')" class="m-nav-btn px-3 py-1.5 text-xs font-semibold whitespace-nowrap border-b-2 text-slate-400 border-transparent">Challenge &amp; Lab</button>
+        <button type="button" data-tab="portal-mentor" onclick="switchTab('portal-mentor')" class="m-nav-btn px-3 py-1.5 text-xs font-semibold whitespace-nowrap border-b-2 text-[#fbbf24] border-transparent" data-mentor="true">👑 Portal Mentor &amp; Asta Cita</button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- MAIN CONTENT CONTAINER -->
+  <main class="flex-1">
+    <!-- HALAMAN 1: BERANDA -->
+    <div id="page-beranda" class="page-view animate-page-enter space-y-16 pb-20">
+      <section class="relative pt-12 sm:pt-16 pb-8 px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto text-center">
+        <div class="inline-flex items-center justify-center bg-blue-950/40 border border-blue-500/30 rounded-full px-4 py-1.5 mb-8">
+          <span class="text-xs sm:text-sm font-semibold text-[#60a5fa] tracking-wide">✨ Inisiatif Asta Cita Nusantara Poin 4: Penguatan SDM, Sains &amp; Teknologi</span>
+        </div>
+        <h1 class="text-center font-extrabold text-4xl sm:text-5xl md:text-6xl leading-tight tracking-tight max-w-4xl mx-auto">
+          <span class="block text-white">Jangan hanya bertanya kepada</span>
+          <span class="block text-white mt-1">AI.</span>
+          <span class="block mt-1.5 bg-gradient-to-r from-[#3b82f6] to-[#10b981] bg-clip-text text-transparent">Uji kebenarannya.</span>
+        </h1>
+        <p class="mt-6 text-center text-[#94a3b8] text-base sm:text-lg leading-relaxed max-w-2xl mx-auto">
+          Kefasihan AI seringkali menutupi halusinasi dan referensi fiktif. Ubah pendekatan Anda dari sekadar pengguna pasif (<em class="italic text-slate-300">knowing</em>) menjadi penguji aktif yang berbasis bukti (<em class="italic text-slate-300">doing</em>).
+        </p>
+        <div class="mt-9 flex flex-col sm:flex-row items-center justify-center gap-4">
+          <button type="button" onclick="switchTab('uji-output')" class="w-full sm:w-auto bg-[#2563eb] hover:bg-[#3b82f6] text-white font-bold text-sm sm:text-base rounded-xl px-7 py-3.5 shadow-[0_0_25px_rgba(37,99,235,0.45)] transition-all duration-300 ease-out hover:-translate-y-0.5 active:scale-95 cursor-pointer">Mulai Audit Jawaban AI</button>
+          <button type="button" onclick="switchTab('portal-mentor')" class="w-full sm:w-auto bg-[#0f172a] hover:bg-[#1e293b] border border-slate-700 text-white font-bold text-sm sm:text-base rounded-xl px-7 py-3.5 transition-all duration-300 ease-out hover:-translate-y-0.5 active:scale-95 cursor-pointer">Lihat Portal Mentor &amp; Asta Cita</button>
+        </div>
+      </section>
+
+      <!-- Siklus Pembelajaran Verification-First & V-Score Weights -->
+      <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
+        <div class="bg-[#0b1120] border border-[#1e293b] rounded-2xl p-6 sm:p-8 shadow-xl space-y-6">
+          <h2 class="text-2xl sm:text-3xl font-extrabold text-white">Siklus Pembelajaran Verification-First</h2>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <div onclick="switchTab('tanya-ai')" class="bg-[#0f172a] hover:border-blue-500/60 border border-[#1e293b] rounded-xl p-5 transition-all duration-300 hover:-translate-y-1 cursor-pointer">
+              <span class="text-xs font-extrabold uppercase text-blue-400">FASE 1 · LEARN</span>
+              <h3 class="text-lg font-bold text-white mt-2">Sintesis dengan Bukti Bersih</h3>
+              <p class="text-sm text-slate-400 mt-1">Menarik referensi nyata dari SINTA, Garuda, dan Scholar Bersih tanpa tautan profil kosong.</p>
+            </div>
+            <div onclick="switchTab('challenge-lab')" class="bg-[#0f172a] hover:border-amber-500/60 border border-[#1e293b] rounded-xl p-5 transition-all duration-300 hover:-translate-y-1 cursor-pointer">
+              <span class="text-xs font-extrabold uppercase text-amber-400">FASE 2 · CHALLENGE</span>
+              <h3 class="text-lg font-bold text-white mt-2">Simulasi Kasus Rekayasa</h3>
+              <p class="text-sm text-slate-400 mt-1">Berlatih mendeteksi Manipulasi Konteks Statistik, Sitasi Jurnal Fiktif, dan Over-Generalisasi.</p>
+            </div>
+            <div onclick="switchTab('uji-output')" class="bg-[#0f172a] hover:border-emerald-500/60 border border-[#1e293b] rounded-xl p-5 transition-all duration-300 hover:-translate-y-1 cursor-pointer">
+              <span class="text-xs font-extrabold uppercase text-emerald-400">FASE 3 · VERIFY (4 TAHAP)</span>
+              <h3 class="text-lg font-bold text-white mt-2">Audit Berlapis &amp; Verdict</h3>
+              <p class="text-sm text-slate-400 mt-1">Menguji klaim melalui 01. Claim, 02. Source, 03. Evidence, dan 04. Context sebelum Verdict.</p>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-2">
+            <div class="bg-[#0f172a] border border-[#1e293b] hover:border-blue-500/50 rounded-xl p-4 transition-all duration-300 hover:-translate-y-1">
+              <div class="text-xs font-extrabold text-blue-400">01. Claim (20%)</div>
+              <div class="font-bold text-white mt-1">Claim Identification</div>
+              <p class="text-xs text-slate-400 mt-1">Isolasi klaim faktual &amp; angka statistik dari narasi AI.</p>
+            </div>
+            <div class="bg-[#0f172a] border border-[#1e293b] hover:border-blue-500/50 rounded-xl p-4 transition-all duration-300 hover:-translate-y-1">
+              <div class="text-xs font-extrabold text-cyan-400">02. Source (20%)</div>
+              <div class="font-bold text-white mt-1">Source Verification</div>
+              <p class="text-xs text-slate-400 mt-1">Validasi eksistensi dokumen di Garuda/SINTA/DOI.</p>
+            </div>
+            <div class="bg-[#0f172a] border border-[#1e293b] hover:border-blue-500/50 rounded-xl p-4 transition-all duration-300 hover:-translate-y-1">
+              <div class="text-xs font-extrabold text-emerald-400">03. Evidence (25%)</div>
+              <div class="font-bold text-white mt-1">Evidence Matching</div>
+              <p class="text-xs text-slate-400 mt-1">Pencocokan klaim AI terhadap Evidence Snippet primer.</p>
+            </div>
+            <div class="bg-[#0f172a] border border-[#1e293b] hover:border-blue-500/50 rounded-xl p-4 transition-all duration-300 hover:-translate-y-1">
+              <div class="text-xs font-extrabold text-amber-400">04. Context (20% + 15% Ethical)</div>
+              <div class="font-bold text-white mt-1">Context &amp; Ethical Judgment</div>
+              <p class="text-xs text-slate-400 mt-1">Evaluasi ruang lingkup sampel &amp; vonis akhir bertanggung jawab.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- HALAMAN 2: TANYA AI -->
+    <div id="page-tanya-ai" class="page-view hidden animate-page-enter max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8 pb-20">
+      <div class="space-y-2">
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white">Tanya AI dengan Sumber Aktual</h1>
+        <p class="text-[#94a3b8] text-sm sm:text-base">Mesin mensintesis jawaban, namun wajib menarik bukti nyata dari internet melalui Live Search API dengan pembersihan tautan profil.</p>
+      </div>
+      <div class="bg-[#0b1120] border border-[#1e293b] rounded-2xl p-6 sm:p-8 space-y-5">
+        <label class="flex items-center gap-3 bg-[#0f172a] border border-blue-500/30 rounded-xl p-4 cursor-pointer">
+          <input id="sa-academic-check" type="checkbox" checked class="w-5 h-5 accent-[#2563eb]" />
+          <span class="text-sm sm:text-base font-bold text-white">Fokus Pangkalan Data Akademik (SINTA / Garuda / Google Scholar Bersih)</span>
+        </label>
+        <div class="flex flex-col sm:flex-row gap-3">
+          <input id="sa-query-input" type="text" value="Dampak konsumsi minuman berpemanis terhadap diabetes remaja di Indonesia" class="flex-1 bg-[#0f172a] border border-slate-700 rounded-xl px-4 py-3.5 text-white" />
+          <button type="button" onclick="runStandaloneSearch()" class="bg-[#2563eb] hover:bg-[#3b82f6] text-white font-bold rounded-xl px-7 py-3.5 cursor-pointer">Cari &amp; Sintesis</button>
+        </div>
+      </div>
+      <div id="sa-search-results" class="space-y-6"></div>
+    </div>
+
+    <!-- HALAMAN 3: UJI OUTPUT AI -->
+    <div id="page-uji-output" class="page-view hidden animate-page-enter max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8 pb-20">
+      <div class="space-y-2">
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white">Audit Output AI (Pipeline)</h1>
+        <p class="text-[#94a3b8] text-sm sm:text-base">Tempelkan paragraf jawaban dari AI untuk mengekstraksi klaim dan mengujinya melalui data Live Search yang telah disaring dari tautan profil kosong.</p>
+      </div>
+      <div class="bg-[#0b1120] border border-[#1e293b] rounded-2xl p-6 sm:p-8 space-y-4">
+        <label class="text-xs font-extrabold uppercase tracking-wider text-slate-200 block">MASUKKAN JAWABAN AI DI SINI:</label>
+        <textarea id="sa-audit-input" rows="4" class="w-full bg-[#0f172a] border border-slate-700 rounded-xl p-4 text-white">Berdasarkan laporan resmi Kementerian Kesehatan dan Ikatan Dokter Anak Indonesia (IDAI) tahun 2023, jumlah penderita diabetes pada remaja di Indonesia melonjak drastis sebesar 70% yang secara langsung dan tunggal disebabkan oleh konsumsi harian minuman kemasan berpemanis (MBDK) di kantin sekolah.</textarea>
+        <div class="flex justify-end">
+          <button type="button" onclick="runStandaloneAudit()" class="bg-[#2563eb] hover:bg-[#3b82f6] text-white font-bold rounded-xl px-7 py-3.5 cursor-pointer">Ekstrak &amp; Verifikasi Klaim</button>
+        </div>
+      </div>
+      <div id="sa-audit-panels" class="grid grid-cols-1 lg:grid-cols-12 gap-6"></div>
+    </div>
+
+    <!-- HALAMAN 4: CHALLENGE & LAB -->
+    <div id="page-challenge-lab" class="page-view hidden animate-page-enter max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8 pb-20">
+      <div class="space-y-2">
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white">AI Verification Challenge</h1>
+        <p class="text-[#94a3b8] text-sm sm:text-base">Arena latihan di mana Anda diberikan output AI yang sengaja direkayasa untuk diuji.</p>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6" id="sa-challenge-cards"></div>
+    </div>
+
+    <!-- HALAMAN 5: PORTAL MENTOR & ASTA CITA -->
+    <div id="page-portal-mentor" class="page-view hidden animate-page-enter max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8 pb-20">
+      <section class="bg-[#0b1120] border border-[#1e293b] rounded-2xl p-6 sm:p-8 space-y-6">
+        <span class="inline-flex px-3 py-1 rounded-full text-xs font-extrabold uppercase bg-amber-950/70 text-[#fbbf24] border border-amber-500/40">RELEVANSI KEBIJAKAN NASIONAL</span>
+        <h2 class="text-2xl sm:text-3xl font-extrabold text-white">Indikator Ketercapaian Asta Cita Poin 4</h2>
+        <p class="text-sm sm:text-base text-[#94a3b8]">Platform ini mengoperasionalkan mandat Asta Cita Poin 4 (Penguatan SDM, sains, teknologi, dan pendidikan) melalui pengukuran V-Score secara berkala pada komunitas dan institusi pendidikan mitra.</p>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <div class="bg-[#0f172a] border border-[#1e293b] rounded-xl p-5">
+            <div class="text-xs font-extrabold text-slate-400">STATUS INTEGRASI</div>
+            <div class="text-2xl font-extrabold text-[#10b981] mt-1">Aktif &amp; Terverifikasi</div>
+          </div>
+          <div class="bg-[#0f172a] border border-[#1e293b] rounded-xl p-5">
+            <div class="text-xs font-extrabold text-slate-400">TOTAL SISWA BINAAN</div>
+            <div class="text-2xl font-extrabold text-white mt-1">42 Pengguna</div>
+          </div>
+          <div class="bg-[#0f172a] border border-[#1e293b] rounded-xl p-5">
+            <div class="text-xs font-extrabold text-slate-400">RATA-RATA V-SCORE</div>
+            <div class="text-2xl font-extrabold text-[#fbbf24] mt-1">84.2 / 100</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const SERPER_API_KEY = "add97be3b65cd3173f96d10b7b918c309e850e59";
+    let currentVScore = 78;
+
+    function triggerTubeWiggle() {
+      const btn = document.getElementById('tube-btn');
+      btn.classList.remove('animate-tube-wiggle');
+      void btn.offsetWidth;
+      btn.classList.add('animate-tube-wiggle');
+    }
+
+    function switchTab(tabId) {
+      document.querySelectorAll('.page-view').forEach(el => el.classList.add('hidden'));
+      const target = document.getElementById('page-' + tabId);
+      if (target) target.classList.remove('hidden');
+
+      document.querySelectorAll('.nav-btn').forEach(btn => {
+        const isAct = btn.getAttribute('data-tab') === tabId;
+        const isMentor = btn.getAttribute('data-mentor') === 'true';
+        btn.className = 'nav-btn relative h-full inline-flex items-center px-1 text-sm font-semibold whitespace-nowrap transition-all duration-300 ease-out hover:-translate-y-0.5 active:scale-95 border-b-2 cursor-pointer ' +
+          (isAct ? 'text-[#3b82f6] border-[#3b82f6]' : (isMentor ? 'text-[#fbbf24] border-transparent' : 'text-slate-300 border-transparent'));
+      });
+    }
+  </script>
+</body>
+</html>
