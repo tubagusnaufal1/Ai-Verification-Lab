@@ -2,6 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   sanitizeSnippetText,
+  cleanAcademicSnippet,
+  buildTopicRelevantSynthesis,
+  filterCleanSearchResults,
+  analyzeReferenceCredibility,
+  detectEpistemicStanceForTopic,
+  generateVerifiedAcademicRewrite,
   stripInlineCitationMarkers,
   buildSearchQuery,
   getFallbackAcademicResults,
@@ -13,6 +19,7 @@ import {
   encodeScenarioToken,
   decodeScenarioToken,
   CHALLENGE_SCENARIOS,
+  SearchReference,
 } from './verificationLogic';
 import {
   upsertStudentScoreEntry,
@@ -27,6 +34,192 @@ test('stripInlineCitationMarkers removes inline [1], [2], [3] markers cleanly', 
   assert.ok(!stripped.includes('[2]'));
   assert.ok(!stripped.includes('[3]'));
   assert.ok(stripped.includes('Berdasarkan studi IDAI tahun 2023, prevalensi diabetes meningkat tajam'));
+});
+
+test('cleanAcademicSnippet removes raw meta-abstract phrases and buildTopicRelevantSynthesis never appends boilerplate audit sentences', () => {
+  const rawAbstract =
+    'Berdasarkan latar belakang di atas, penelitian ini akan menganalisa tentang klaim peninggalan Ratu Balqis dan Nabi Sulaiman di Nusantara || metode yang digunakan adalah studi kepustakaan...';
+  const cleaned = cleanAcademicSnippet(
+    rawAbstract,
+    'Studi Kritis Klaim Peninggalan Nabi Sulaiman di Nusantara'
+  );
+  assert.ok(!/penelitian ini akan menganalisa/i.test(cleaned));
+  assert.ok(!/metode yang digunakan adalah/i.test(cleaned));
+  assert.ok(!cleaned.includes('||'));
+  assert.ok(!cleaned.includes('...'));
+
+  const refs = getFallbackAcademicResults('Transisi Energi Baru Terbarukan');
+  const synthesis = buildTopicRelevantSynthesis('Transisi Energi Baru Terbarukan', refs);
+  assert.ok(
+    !/proses audit informasi wajib menyandingkan/i.test(synthesis),
+    'Should never contain system audit boilerplate'
+  );
+  assert.ok(
+    !/rangkaian bukti pada ketiga referensi awal ini/i.test(synthesis),
+    'Should never contain system filler sentence'
+  );
+});
+
+test('filterCleanSearchResults only sets [PDF] on genuine PDF URLs and analyzeReferenceCredibility detects popular media vs critical academic journals', () => {
+  const rawItems = [
+    {
+      title: '[PDF] Klaim Candi Borobudur Peninggalan Nabi Sulaiman Viral',
+      link: 'https://poskotakaltimnews.com/read/2024/candi-borobudur-nabi-sulaiman',
+      snippet: 'Beredar klaim populer bahwa Candi Borobudur merupakan peninggalan Nabi Sulaiman.',
+    },
+    {
+      title: 'Studi Kritis Ad-Dakhil dan Israiliyat pada Tafsir Kisah Nabi Sulaiman di Indonesia',
+      link: 'https://journal.uinjkt.ac.id/index.php/ushuluddin/article/download/1234/pdf/',
+      snippet:
+        'Kajian tafsir ini membantah klaim sepihak mengenai lokasi Kerajaan Nabi Sulaiman di Jawa sebagai riwayat Israiliyat dan cocoklogi.',
+    },
+  ];
+
+  const cleanedRefs = filterCleanSearchResults(rawItems, true);
+  assert.equal(cleanedRefs.length, 2);
+
+  // Item 1 is poskotakaltimnews.com (not a PDF!)
+  assert.equal(cleanedRefs[0].isPdf, false);
+  assert.ok(!cleanedRefs[0].title.startsWith('[PDF]'));
+  const cred0 = analyzeReferenceCredibility(cleanedRefs[0]);
+  assert.equal(cred0.sourceTier, 'SECONDARY_POPULAR');
+  assert.ok(cred0.credibilityBadge.includes('Sumber Sekunder / Media Populer'));
+
+  // Item 2 is journal.uinjkt.ac.id with /pdf/ and critical/ad-dakhil stance
+  assert.equal(cleanedRefs[1].isPdf, true);
+  assert.ok(cleanedRefs[1].title.startsWith('[PDF]'));
+  const cred1 = analyzeReferenceCredibility(cleanedRefs[1]);
+  assert.equal(cred1.sourceTier, 'PRIMARY_ACADEMIC');
+  assert.equal(cred1.isCriticalStance, true);
+  assert.ok(cred1.criticalStanceBadge?.includes('Literatur Pengkritisi / Evaluatif'));
+});
+
+test('detectEpistemicStanceForTopic, evaluateVerdictAndCalculateVScore, and generateVerifiedAcademicRewrite handle controversial claims (Kerajaan Nabi Sulaiman di Indonesia) with full critical thinking score', () => {
+  const sulaimanRefs: SearchReference[] = [
+    {
+      id: 1,
+      title: 'Studi Kritis Klaim Kerajaan Nabi Sulaiman di Indonesia Perspektif Ad-Dakhil',
+      url: 'https://journal.uinjkt.ac.id/index.php/quhas/article/view/29410',
+      scholarUrl: 'https://scholar.google.com/scholar?q=Studi+Kritis+Klaim+Kerajaan+Nabi+Sulaiman',
+      snippet:
+        'Kajian historiografi dan tafsir Ad-Dakhil menyimpulkan bahwa klaim Candi Borobudur sebagai peninggalan Nabi Sulaiman merupakan spekulasi tanpa bukti arkeologis primer.',
+      isPdf: false,
+      domain: 'journal.uinjkt.ac.id',
+    },
+    {
+      id: 2,
+      title: 'Sejarah Arkeologi Candi Borobudur pada Masa Dinasti Syailendra Abad ke-8',
+      url: 'https://jurnal.ugm.ac.id/humaniora/article/view/11201',
+      scholarUrl: 'https://scholar.google.com/scholar?q=Sejarah+Arkeologi+Candi+Borobudur+Syailendra',
+      snippet:
+        'Bukti prasasti Kayumwungan dan arkeologi memastikan Candi Borobudur dibangun pada masa Dinasti Syailendra abad ke-8 Masehi.',
+      isPdf: false,
+      domain: 'jurnal.ugm.ac.id',
+    },
+    {
+      id: 3,
+      title: 'Klaim Borobudur Peninggalan Nabi Sulaiman Kembali Ramai Dibahas',
+      url: 'https://poskotakaltimnews.com/berita/borobudur-sulaiman',
+      scholarUrl: 'https://scholar.google.com/scholar?q=Klaim+Borobudur+Peninggalan+Nabi+Sulaiman',
+      snippet:
+        'Narasi populer di media sosial menyebutkan teori spekulatif mengenai negeri Saba di Nusantara namun dibantah oleh para sejarawan.',
+      isPdf: false,
+      domain: 'poskotakaltimnews.com',
+    },
+    {
+      id: 4,
+      title: 'Analisis Israiliyat dalam Penafsiran Kisah Ratu Saba dan Nabi Sulaiman',
+      url: 'https://ejournal.uin-suka.ac.id/ushuluddin/esensia/article/view/4412',
+      scholarUrl: 'https://scholar.google.com/scholar?q=Analisis+Israiliyat+Ratu+Saba+Nabi+Sulaiman',
+      snippet:
+        'Literatur tafsir kritis mengidentifikasi masuknya unsur Israiliyat dalam spekulasi lokasi geografis Saba di luar Jazirah Arab Selatan (Yaman).',
+      isPdf: false,
+      domain: 'ejournal.uin-suka.ac.id',
+    },
+    {
+      id: 5,
+      title: 'Epigrafi dan Kronologi Pembangunan Kompleks Candi Buddha Jawa Tengah',
+      url: 'https://kemdikbud.go.id/arkeologi/borobudur-syailendra',
+      scholarUrl: 'https://scholar.google.com/scholar?q=Epigrafi+Kronologi+Borobudur',
+      snippet:
+        'Data stratigrafi dan epigrafi Balai Konservasi Borobudur mengonfirmasi corak arsitektur Buddha Mahayana abad ke-8 hingga ke-9 Masehi.',
+      isPdf: false,
+      domain: 'kemdikbud.go.id',
+    },
+    {
+      id: 6,
+      title: 'Kritik Metodologi Cocoklogi Sejarah Kuno Nusantara dalam Kajian Akademik',
+      url: 'https://journal.ui.ac.id/sejarah/article/view/8891',
+      scholarUrl: 'https://scholar.google.com/scholar?q=Kritik+Metodologi+Cocoklogi+Sejarah+Nusantara',
+      snippet:
+        'Sejarawan menolak klaim pseudo-historis yang mengaitkan situs klasik Nusantara dengan kerajaan Timur Tengah Kuno tanpa bukti artefak.',
+      isPdf: false,
+      domain: 'journal.ui.ac.id',
+    },
+  ];
+
+  const synthesis = buildTopicRelevantSynthesis(
+    'Kerajaan Nabi Sulaiman ada di Indonesia',
+    sulaimanRefs
+  );
+  const stance = detectEpistemicStanceForTopic(
+    'Kerajaan Nabi Sulaiman ada di Indonesia',
+    sulaimanRefs
+  );
+
+  assert.equal(stance.hasCriticalOrDebunkingStance, true);
+  assert.equal(stance.recommendedExpectedVerdict, 'PARTIALLY SUPPORTED');
+  assert.equal(stance.thesisConclusion.statusCategory, 'SPEKULATIF_DIPERDEBATKAN');
+
+  const claims = extractClaimsFromText(synthesis, sulaimanRefs, 'VERIFIED');
+  assert.ok(claims.length >= 2);
+
+  // Student critically marks claims as DISTORSI / HALUSINASI and chooses PARTIALLY SUPPORTED
+  const studentMicroAudits: Record<string, {
+    claimId: string;
+    microVerdict: 'DISTORSI' | 'HALUSINASI';
+    evidenceRefId: string;
+    detectedPathology: 'CONTEXTUAL_DRIFT';
+  }> = {};
+  for (const c of claims) {
+    studentMicroAudits[c.id] = {
+      claimId: c.id,
+      microVerdict: 'DISTORSI',
+      evidenceRefId: '', // Even if student forgot dropdown, Stage 2 should still get 25/25 with 3+ inspected refs!
+      detectedPathology: 'CONTEXTUAL_DRIFT',
+    };
+  }
+
+  const criticalJustification =
+    'Berdasarkan bukti sumber jurnal studi kritis Ad-Dakhil dan Israiliyat serta arkeologi Borobudur Syailendra, klaim Kerajaan Nabi Sulaiman di Indonesia adalah spekulatif dan mengandung distorsi konteks sejarah.';
+
+  const evaluation = evaluateVerdictAndCalculateVScore({
+    currentVScore: 80,
+    verdict: 'PARTIALLY SUPPORTED',
+    justification: criticalJustification,
+    claimText: synthesis,
+    references: sulaimanRefs,
+    expectedVerdict: 'VERIFIED', // Even if sent from Normal mode, student's critical verdict is rewarded 100%!
+    extractedClaims: claims,
+    microAudits: studentMicroAudits,
+    inspectedReferenceIds: [1, 2, 3, 4],
+  });
+
+  assert.equal(evaluation.stageBreakdown.stage1ClaimAudit, 25);
+  assert.equal(evaluation.stageBreakdown.stage2SourceVerification, 25);
+  assert.equal(evaluation.stageBreakdown.stage3VerdictAccuracy, 25);
+  assert.equal(evaluation.stageBreakdown.stage4JustificationQuality, 25);
+  assert.equal(evaluation.newVScore, 100);
+  assert.equal(evaluation.isCalibrated, true);
+  assert.ok(evaluation.thesisConclusion);
+  assert.equal(evaluation.thesisConclusion?.statusCategory, 'SPEKULATIF_DIPERDEBATKAN');
+
+  const rewrite = generateVerifiedAcademicRewrite(synthesis, sulaimanRefs, 'PARTIALLY SUPPORTED');
+  assert.ok(
+    /hipotesis spekulatif yang mendapat sorotan kritis dalam kajian tafsir dan historiografi \(Ad-Dakhil \/ Isra'iliyat\)/i.test(
+      rewrite.correctedParagraph
+    )
+  );
 });
 
 test('extractClaimsFromText synchronizes with expectedVerdict === VERIFIED (Mode Normal Akurat)', () => {

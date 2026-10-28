@@ -1,5 +1,10 @@
 import React, { useState } from 'react';
-import { SearchReference, VerdictType } from '../utils/verificationLogic';
+import {
+  SearchReference,
+  VerdictType,
+  analyzeReferenceCredibility,
+  detectEpistemicStanceForTopic,
+} from '../utils/verificationLogic';
 import {
   performCleanLiveSearch,
   generateControlledHallucinationMode,
@@ -77,16 +82,23 @@ export const TanyaAIView: React.FC<TanyaAIViewProps> = ({ onSendToAudit, onNotif
     }
   };
 
-  // Mode 1: Kirim Teks Normal (Akurat Sesuai Bukti -> expectedVerdict = 'VERIFIED')
+  // Mode 1: Kirim Teks Normal (Deteksi otomatis apakah topik memuat Studi Kritis/Ad-Dakhil atau Konsensus Ilmiah)
   const handleSendNormalMode = () => {
     if (!result) return;
+    const topicText = query.trim() || result.synthesizedAnswer;
+    const stance = detectEpistemicStanceForTopic(topicText, result.references);
+    const computedVerdict: VerdictType = stance.hasCriticalOrDebunkingStance
+      ? stance.recommendedExpectedVerdict
+      : 'VERIFIED';
+
     onSendToAudit({
       claimText: result.synthesizedAnswer,
       references: result.references,
-      expectedVerdict: 'VERIFIED',
-      scenarioTitle: `Tanya AI (Mode Normal Akurat): ${query.trim() || 'Sintesis Ilmiah'}`,
-      calibrationHint:
-        'Teks ini dikirim melalui Mode Teks Normal (Akurat Sesuai Bukti): Seluruh paragraf sintesis disusun langsung dari ke-6 referensi primer yang relevan tanpa injeksi distorsi maupun sitasi fiktif. Kunci jawaban Verdict yang tepat adalah VERIFIED.',
+      expectedVerdict: computedVerdict,
+      scenarioTitle: `Tanya AI (Mode Normal): ${query.trim() || 'Sintesis Ilmiah'}`,
+      calibrationHint: stance.hasCriticalOrDebunkingStance
+        ? `Detektor Epistemik mendeteksi bahwa topik "${query.trim()}" memuat literatur pengkritisi (Studi Kritis / Ad-Dakhil / Isra'iliyat) atau sumber sekunder, sehingga klaim awal bersifat spekulatif/diperdebatkan (${computedVerdict}). Analisis kritis Anda yang konsisten akan memperoleh skor penuh 25/25.`
+        : 'Teks ini dikirim melalui Mode Teks Normal (Akurat Sesuai Bukti): Seluruh paragraf sintesis disusun langsung dari ke-6 referensi primer yang relevan tanpa injeksi distorsi maupun sitasi fiktif.',
     });
   };
 
@@ -354,74 +366,94 @@ export const TanyaAIView: React.FC<TanyaAIViewProps> = ({ onSendToAudit, onNotif
             </div>
 
             <div className="grid grid-cols-1 gap-4">
-              {result.references.map((ref) => (
-                <div
-                  key={ref.id}
-                  className="bg-[#0b1120] hover:bg-[#0f172a] border border-[#1e293b] hover:border-blue-500/50 rounded-xl p-5 transition-all duration-200 space-y-3.5"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex items-start gap-3">
-                      <span className="shrink-0 w-7 h-7 rounded-lg bg-blue-600/20 border border-blue-500/40 text-blue-400 font-extrabold text-xs flex items-center justify-center font-mono tabular-nums">
-                        [{ref.id}]
-                      </span>
-                      <div>
-                        <h3 className="text-base font-bold text-white leading-snug">{ref.title}</h3>
-                        <p className="text-xs text-slate-400 font-mono mt-0.5 break-all">
-                          {ref.url}
-                        </p>
+              {result.references.map((ref) => {
+                const cred = analyzeReferenceCredibility(ref);
+                return (
+                  <div
+                    key={ref.id}
+                    className="bg-[#0b1120] hover:bg-[#0f172a] border border-[#1e293b] hover:border-blue-500/50 rounded-xl p-5 transition-all duration-200 space-y-3.5"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-start gap-3">
+                        <span className="shrink-0 w-7 h-7 rounded-lg bg-blue-600/20 border border-blue-500/40 text-blue-400 font-extrabold text-xs flex items-center justify-center font-mono tabular-nums">
+                          [{ref.id}]
+                        </span>
+                        <div className="space-y-1.5">
+                          <h3 className="text-base font-bold text-white leading-snug">
+                            {ref.title}
+                          </h3>
+                          {/* SPESIFIKASI 3b: Badge Tingkat Kredibilitas & Peran Sumber */}
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span
+                              className={`text-[11px] font-bold px-2.5 py-0.5 rounded border ${
+                                cred.sourceTier === 'PRIMARY_ACADEMIC'
+                                  ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/40'
+                                  : 'bg-orange-950/60 text-orange-300 border-orange-500/40'
+                              }`}
+                            >
+                              {cred.credibilityBadge}
+                            </span>
+                            {cred.isCriticalStance && cred.criticalStanceBadge && (
+                              <span className="text-[11px] font-bold px-2.5 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-500/40">
+                                {cred.criticalStanceBadge}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-400 font-mono break-all">{ref.url}</p>
+                        </div>
                       </div>
-                    </div>
-                    <span className="shrink-0 text-[11px] font-bold px-2.5 py-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                      {ref.domain}
-                    </span>
-                  </div>
-
-                  {/* Evidence Snippet Box */}
-                  <div className="bg-[#020617]/80 border border-slate-800/90 rounded-lg p-3.5 text-sm sm:text-base text-slate-200 leading-relaxed font-editorial">
-                    &ldquo;{ref.snippet}&rdquo;
-                  </div>
-
-                  {/* Dual Action Buttons */}
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                    <div className="flex flex-wrap items-center gap-2.5">
-                      <a
-                        href={ref.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-xs font-bold text-blue-300 hover:text-white transition-colors"
-                      >
-                        <ExternalLink className="w-3.5 h-3.5" />
-                        🔗 Buka Web Asli
-                      </a>
-
-                      <a
-                        href={ref.scholarUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-500/40 text-xs font-bold text-emerald-300 hover:text-white transition-colors"
-                      >
-                        <GraduationCap className="w-3.5 h-3.5" />
-                        🎓 Cari Judul di Google Scholar
-                      </a>
+                      <span className="shrink-0 text-[11px] font-bold px-2.5 py-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                        {ref.domain}
+                      </span>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onSendToAudit({
-                          claimText: ref.snippet,
-                          references: result.references,
-                          expectedVerdict: 'VERIFIED',
-                          scenarioTitle: `Audit Kutipan Bukti [${ref.id}]: ${ref.title}`,
-                        })
-                      }
-                      className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-400 hover:text-blue-300 cursor-pointer"
-                    >
-                      Uji Kutipan Ini di Meja Audit →
-                    </button>
+                    {/* Evidence Snippet Box */}
+                    <div className="bg-[#020617]/80 border border-slate-800/90 rounded-lg p-3.5 text-sm sm:text-base text-slate-200 leading-relaxed font-editorial">
+                      &ldquo;{ref.snippet}&rdquo;
+                    </div>
+
+                    {/* Dual Action Buttons */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <a
+                          href={ref.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-xs font-bold text-blue-300 hover:text-white transition-colors"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          🔗 Buka Web Asli
+                        </a>
+
+                        <a
+                          href={ref.scholarUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-500/40 text-xs font-bold text-emerald-300 hover:text-white transition-colors"
+                        >
+                          <GraduationCap className="w-3.5 h-3.5" />
+                          🎓 Cari Judul di Google Scholar
+                        </a>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onSendToAudit({
+                            claimText: ref.snippet,
+                            references: result.references,
+                            expectedVerdict: 'VERIFIED',
+                            scenarioTitle: `Audit Kutipan Bukti [${ref.id}]: ${ref.title}`,
+                          })
+                        }
+                        className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-400 hover:text-blue-300 cursor-pointer"
+                      >
+                        Uji Kutipan Ini di Meja Audit →
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>

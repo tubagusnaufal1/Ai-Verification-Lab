@@ -17,6 +17,8 @@ import {
   evaluateVerdictAndCalculateVScore,
   generateVerifiedAcademicRewrite,
   downloadAuditReportAsPdf,
+  analyzeReferenceCredibility,
+  detectEpistemicStanceForTopic,
 } from '../utils/verificationLogic';
 import {
   performCleanLiveSearch,
@@ -166,9 +168,22 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
     );
   };
 
-  // SPESIFIKASI 1c: Hubungan logis otomatis pada 3 tombol Vonis Mikro
+  // SPESIFIKASI 1c & 4a: Hubungan logis otomatis pada 3 tombol Vonis Mikro + Auto-select Rujukan Bukti jika masih kosong
   const handleSetMicroVerdict = (claimId: string, verdict: MicroVerdictType) => {
     if (isAuditLocked) return;
+    const targetClaim = extractedClaims.find((c) => c.id === claimId);
+    const fallbackRefId =
+      targetClaim?.suggestedRefId && targetClaim.suggestedRefId !== ''
+        ? targetClaim.suggestedRefId
+        : String(((targetClaim ? targetClaim.index - 1 : 0) % Math.max(1, references.length)) + 1);
+
+    const numericFallbackRef = Number(fallbackRefId);
+    if (!Number.isNaN(numericFallbackRef) && numericFallbackRef > 0) {
+      setInspectedReferenceIds((prev) =>
+        prev.includes(numericFallbackRef) ? prev : [...prev, numericFallbackRef]
+      );
+    }
+
     setMicroAudits((prev) => {
       const existing = prev[claimId] || {
         claimId,
@@ -176,6 +191,14 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
         evidenceRefId: '',
         detectedPathology: '',
       };
+
+      // SPESIFIKASI 4a: Jika dropdown Rujukan Bukti masih kosong, otomatis pilihkan nomor sumber yang paling relevan
+      const nextEvidenceRefId =
+        existing.evidenceRefId && existing.evidenceRefId !== ''
+          ? existing.evidenceRefId
+          : verdict === 'HALUSINASI' && targetClaim?.suggestedRefId === 'NONE'
+            ? 'NONE'
+            : fallbackRefId;
 
       let nextPathology: AIPathologyId | '' = existing.detectedPathology;
       if (verdict === 'SESUAI_BUKTI') {
@@ -193,6 +216,7 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
         [claimId]: {
           ...existing,
           microVerdict: verdict,
+          evidenceRefId: nextEvidenceRefId,
           detectedPathology: nextPathology,
         },
       };
@@ -245,7 +269,7 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
   // Mode "Tempel Teks AI Eksternal (ChatGPT/Claude/Lainnya)"
   const handleExtractAndFetchByoEvidence = async () => {
     const targetText = (byoInputText.trim() || claimText.trim()).trim();
-    if (targetText.length < 15) {
+    if (targetText.length < 6) {
       onNotify(
         'Teks Terlalu Pendek',
         'Tempelkan minimal 1 kalimat klaim dari output AI untuk diaudit.',
@@ -261,13 +285,21 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
       const liveSearchRes = await performCleanLiveSearch(extractedTopic, true);
       onUpdateReferences(liveSearchRes.references);
 
+      const stance = detectEpistemicStanceForTopic(targetText, liveSearchRes.references);
       const newClaims = extractClaimsFromText(targetText, liveSearchRes.references);
       const hasGhost = newClaims.some((c) => c.ghostCitation?.status === 'GHOST_WARNING');
       const hasDistortion = newClaims.some((c) => c.expectedMicroVerdict === 'DISTORSI');
-      let computedExpected: VerdictType = 'VERIFIED';
+      const hasHallucination = newClaims.some((c) => c.expectedMicroVerdict === 'HALUSINASI');
+
+      let computedExpected: VerdictType = stance.recommendedExpectedVerdict;
       if (hasGhost && /doi:|journal of|prof\./i.test(targetText)) {
         computedExpected = 'UNSUPPORTED';
-      } else if (hasDistortion || hasGhost) {
+      } else if (
+        stance.hasCriticalOrDebunkingStance ||
+        hasDistortion ||
+        hasHallucination ||
+        hasGhost
+      ) {
         computedExpected = 'PARTIALLY SUPPORTED';
       }
 
@@ -789,8 +821,16 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
                       ? claim.text
                       : claim.displayText || stripInlineCitationMarkers(claim.text);
 
-                    const isMicroChoiceMatchingKey =
-                      auditState.microVerdict === claim.expectedMicroVerdict;
+                    const processClaimDetail = latestEvaluation?.processLog?.stage1Claims.find(
+                      (sc) => sc.claimIndex === claim.index
+                    );
+                    const isMicroChoiceMatchingKey = processClaimDetail
+                      ? processClaimDetail.isMicroAccurate
+                      : auditState.microVerdict === claim.expectedMicroVerdict ||
+                        ((claim.expectedMicroVerdict === 'DISTORSI' ||
+                          claim.expectedMicroVerdict === 'HALUSINASI') &&
+                          (auditState.microVerdict === 'DISTORSI' ||
+                            auditState.microVerdict === 'HALUSINASI'));
 
                     const requiresPathologySelection =
                       (auditState.microVerdict === 'DISTORSI' ||
@@ -1048,6 +1088,7 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
                 <div className="space-y-3.5">
                   {references.map((ref) => {
                     const isInspected = inspectedReferenceIds.includes(ref.id);
+                    const cred = analyzeReferenceCredibility(ref);
                     return (
                       <div
                         key={ref.id}
@@ -1062,9 +1103,28 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
                             <span className="shrink-0 px-2 py-0.5 rounded bg-blue-600/20 border border-blue-500/40 text-blue-400 font-extrabold text-xs font-mono tabular-nums">
                               Bukti #{ref.id}
                             </span>
-                            <h3 className="text-xs sm:text-sm font-bold text-white leading-snug">
-                              {ref.title}
-                            </h3>
+                            <div className="space-y-1.5">
+                              <h3 className="text-xs sm:text-sm font-bold text-white leading-snug">
+                                {ref.title}
+                              </h3>
+                              {/* SPESIFIKASI 3b: Badge Tingkat Kredibilitas & Peran Sumber */}
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span
+                                  className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                                    cred.sourceTier === 'PRIMARY_ACADEMIC'
+                                      ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/40'
+                                      : 'bg-orange-950/60 text-orange-300 border-orange-500/40'
+                                  }`}
+                                >
+                                  {cred.credibilityBadge}
+                                </span>
+                                {cred.isCriticalStance && cred.criticalStanceBadge && (
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-500/40">
+                                    {cred.criticalStanceBadge}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                           </div>
                           <button
                             type="button"
@@ -1482,6 +1542,44 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
           {/* POST-AUDIT REVIEW, BEDAH KUNCI JAWABAN, VERIFIED ACADEMIC REWRITER, & EKSPOR PDF A4 */}
           {latestEvaluation && (
             <div className="mt-6 bg-[#020617] border-2 border-emerald-500/50 rounded-2xl p-6 sm:p-7 space-y-6 animate-page-enter">
+              {/* SPESIFIKASI 5a: KOTAK KESIMPULAN FAKTA ATAS TESIS/KLAIM AWAL DI BAGIAN PALING ATAS HASIL AUDIT */}
+              {latestEvaluation.thesisConclusion && (
+                <div
+                  className={`rounded-xl p-5 border-2 space-y-2.5 ${
+                    latestEvaluation.thesisConclusion.statusCategory === 'TERBUKTI_ILMIAH'
+                      ? 'bg-emerald-950/35 border-emerald-500/50'
+                      : latestEvaluation.thesisConclusion.statusCategory ===
+                          'SPEKULATIF_DIPERDEBATKAN'
+                        ? 'bg-amber-950/35 border-amber-500/50'
+                        : 'bg-red-950/35 border-red-500/50'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-white">
+                      ⚖️ KESIMPULAN FAKTA ATAS TESIS/KLAIM AWAL:{' '}
+                      <span className="text-blue-300">
+                        {activeScenarioTitle || latestEvaluation.thesisConclusion.topicLabel}
+                      </span>
+                    </div>
+                    <span
+                      className={`text-xs font-extrabold px-3 py-1 rounded-lg border ${
+                        latestEvaluation.thesisConclusion.statusCategory === 'TERBUKTI_ILMIAH'
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                          : latestEvaluation.thesisConclusion.statusCategory ===
+                              'SPEKULATIF_DIPERDEBATKAN'
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                            : 'bg-red-500/20 text-red-300 border-red-500/40'
+                      }`}
+                    >
+                      {latestEvaluation.thesisConclusion.statusLabel}
+                    </span>
+                  </div>
+                  <p className="text-xs sm:text-sm text-slate-200 leading-relaxed">
+                    {latestEvaluation.thesisConclusion.epistemicSummary}
+                  </p>
+                </div>
+              )}
+
               {/* Top Result Summary & PDF Button */}
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-5 border-b border-slate-800">
                 <div className="space-y-1.5">

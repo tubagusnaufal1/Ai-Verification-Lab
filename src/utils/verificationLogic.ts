@@ -214,6 +214,20 @@ export interface StudentAuditProcessLog {
   };
 }
 
+export interface ReferenceCredibilityAnalysis {
+  sourceTier: 'PRIMARY_ACADEMIC' | 'SECONDARY_POPULAR';
+  credibilityBadge: string;
+  isCriticalStance: boolean;
+  criticalStanceBadge?: string;
+}
+
+export interface ThesisEpistemicConclusion {
+  topicLabel: string;
+  statusCategory: 'TERBUKTI_ILMIAH' | 'SPEKULATIF_DIPERDEBATKAN' | 'TIDAK_TERBUKTI_MITOS';
+  statusLabel: string;
+  epistemicSummary: string;
+}
+
 export interface AuditResultRecord {
   id: string;
   claimSummary: string;
@@ -229,6 +243,7 @@ export interface AuditResultRecord {
   apaReferences: string[];
   timestamp: string;
   processLog?: StudentAuditProcessLog;
+  thesisConclusion?: ThesisEpistemicConclusion;
 }
 
 export interface ChallengeScenario {
@@ -270,7 +285,7 @@ export const VSCORE_RUBRIC_100 = [
     label: 'Final Verdict Calibration',
     weight: 25,
     description:
-      'Ketepatan memilih Verdict Akhir sesuai kunci bukti primer (Tepat = 25 poin, Meleset 1 tingkat = 10 poin, Salah total = 0 poin).',
+      'Ketepatan memilih Verdict Akhir sesuai kunci bukti primer atau konsisten secara logis dengan temuan kritis Vonis Mikro & argumen analitis (25 poin).',
   },
   {
     key: 'stage4JustificationQuality',
@@ -278,7 +293,7 @@ export const VSCORE_RUBRIC_100 = [
     label: 'Context & Evidence Justification',
     weight: 25,
     description:
-      'Kualitas argumen tertulis (minimal 8 kata bermakna, lolos uji Anti-Gibberish, merujuk pada bukti/konteks metodologi secara logis).',
+      'Kualitas argumen tertulis (minimal 12 kata bermakna, lolos uji Anti-Gibberish, merujuk pada kata kunci topik & istilah verifikasi bukti).',
   },
 ] as const;
 
@@ -291,13 +306,59 @@ export function buildScholarSearchUrl(titleOrQuery: string): string {
 }
 
 /**
- * Membersihkan tanda elipsis ("..." atau "…") dan metadata tanggal/penulis yang menggantung
- * dari snippet mesin pencari agar menjadi kalimat yang rapi dan utuh.
+ * SPESIFIKASI 3a: Hanya bernilai true apabila URL benar-benar berakhiran .pdf atau memuat /pdf/
  */
-export function sanitizeSnippetText(rawText: string): string {
-  if (!rawText) return '';
-  let text = rawText
+export function isGenuinePdfUrl(url: string): boolean {
+  if (!url) return false;
+  const lower = url.toLowerCase().trim();
+  return /\.pdf(?:$|\?|#)/i.test(lower) || /\/pdf\//i.test(lower);
+}
+
+/**
+ * SPESIFIKASI 1a: Membersihkan kalimat meta-abstrak mentah ("Penelitian ini mengkaji tentang...",
+ * "dari latar belakang di atas, penelitian ini akan menganalisa...", "metode yang digunakan adalah..."),
+ * karakter aneh (||, -., ..), dan potongan elipsis sehingga menjadi kalimat substansi temuan yang utuh.
+ */
+export function cleanAcademicSnippet(rawSnippet: string, title = ''): string {
+  if (!rawSnippet && !title) return '';
+  const cleanTitle = (title || '')
+    .replace(/^\[PDF\]\s*/i, '')
+    .replace(/\s*\|\|.*$/g, '')
+    .replace(/\s*(\.{2,}|…)\s*$/g, '')
+    .trim();
+
+  let text = (rawSnippet || '')
     .replace(/^(?:(?:oleh|by)\s+.*?\s*[—\-]\s*|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}\s*[—\-]\s*)/i, '')
+    .replace(/\|\|/g, '. ')
+    .replace(/-\./g, '. ')
+    .replace(/\s*--\s*/g, ' — ')
+    .replace(/\b(?:ABSTRAK|ABSTRACT)\s*[:.-]?\s*/gi, '')
+    .trim();
+
+  // Hapus klausa meta-metodologi/abstrak yang tidak memuat substansi temuan
+  const metaAbstractPatterns: RegExp[] = [
+    /(?:berdasarkan|dari)\s+latar\s+belakang\s+(?:di\s+atas|tersebut|masalah)\s*,?\s*(?:maka\s+)?(?:penelitian|studi|tulisan|artikel|skripsi|jurnal|kajian)\s+ini\s+(?:akan\s+|bertujuan\s+(?:untuk\s+)?)?(?:mengkaji|menganalis[ai]s?|membahas|meneliti|mendeskripsikan|mengetahui)\s+(?:tentang\s+|mengenai\s+)?/gi,
+    /\b(?:adapun\s+)?tujuan\s+(?:dari\s+|utama\s+)?(?:penelitian|studi|kajian|artikel|penulisan)\s+ini\s+adalah\s+(?:untuk\s+)?(?:mengkaji|menganalis[ai]s?|mengetahui|mendeskripsikan|membahas)\s+(?:tentang\s+|mengenai\s+)?/gi,
+    /\b(?:penelitian|studi|artikel|tulisan|skripsi|jurnal|makalah)\s+ini\s+(?:bertujuan\s+(?:untuk\s+)?|akan\s+)?(?:mengkaji|menganalis[ai]s?|membahas|meneliti|menjelaskan|mendeskripsikan|mengetahui)\s+(?:tentang\s+|mengenai\s+|bagaimana\s+)?/gi,
+    /\b(?:penelitian|studi|kajian|artikel|tulisan)\s+ini\s+menggunakan\s+(?:pendekatan\s+|metode\s+)?(?:kualitatif|kuantitatif|studi\s+kepustakaan|library\s+research|deskriptif)[^.!?]*[.!?]?\s*(?:\(library\s+research\)\s*,?\s*[^.!?]*[.!?]?\s*)?/gi,
+    /\bmetode\s+(?:penelitian\s+)?yang\s+digunakan\s+(?:dalam\s+(?:penelitian|studi|kajian)\s+ini\s+)?(?:adalah|yaitu|yakni|menggunakan)\s+[^.!?]*[.!?]?\s*/gi,
+    /\bpendekatan\s+yang\s+digunakan\s+dalam\s+(?:penelitian|studi)\s+ini\s+adalah\s+[^.!?]*[.!?]?\s*/gi,
+    /\bjenis\s+penelitian\s+ini\s+adalah\s+(?:penelitian\s+)?(?:kepustakaan|kualitatif|kuantitatif|library\s+research)[^.!?]*[.!?]?\s*/gi,
+  ];
+
+  for (const pattern of metaAbstractPatterns) {
+    text = text.replace(pattern, (_match, offset) => {
+      return offset === 0 ? 'Kajian literatur ini menyoroti ' : ' ';
+    });
+  }
+
+  // Bersihkan pengulangan "Kajian literatur ini menyoroti" jika diikuti kata kerja pasif/abstrak yang patah
+  text = text
+    .replace(
+      /^Kajian literatur ini menyoroti\s+(?:bahwa|tentang|mengenai|apakah|bagaimana|Kajian literatur ini menyoroti)\s+/i,
+      'Hasil telaah literatur menguraikan '
+    )
+    .replace(/\s+/g, ' ')
     .trim();
 
   if (/(?:\.{2,}|…)\s*$/.test(text)) {
@@ -320,11 +381,23 @@ export function sanitizeSnippetText(rawText: string): string {
     .replace(/\s+([,.;!?])/g, '$1')
     .replace(/[,;:]+\s*\.?$/, '')
     .replace(
-      /\s+\b(?:dan|atau|yang|di|ke|dari|pada|untuk|dengan|dalam|terhadap|sebagai|karena|bahwa)\s*\.?$/i,
+      /\s+(?:dan|serta|atau)\s+(?:apa\s+saja(?:\s+\w+)?|bagaimana(?:\s+\w+)?|faktor\s+apa(?:\s+\w+)?)\s*\.?$/i,
+      ''
+    )
+    .replace(
+      /\s+\b(?:dan|atau|yang|di|ke|dari|pada|untuk|dengan|dalam|terhadap|sebagai|karena|bahwa|tentang|mengenai|akan|ini|itu|apa|saja|bentuk)\s*\.?$/i,
       ''
     )
     .replace(/\s+/g, ' ')
     .trim();
+
+  // Jika setelah dibersihkan teks terlalu pendek (< 35 karakter) atau hanya menyisakan pengantar kosong, bangun kalimat utuh dari judul
+  if (
+    (text.length < 35 || /^Kajian literatur ini menyoroti\.?$/i.test(text)) &&
+    cleanTitle.length > 5
+  ) {
+    text = `Telaah akademik pada publikasi "${cleanTitle}" mengkaji secara kritis validitas historis, metodologi penafsiran, serta bukti empiris terkait pokok bahasan yang diuji.`;
+  }
 
   if (!text) return '';
   text = text.charAt(0).toUpperCase() + text.slice(1);
@@ -332,6 +405,156 @@ export function sanitizeSnippetText(rawText: string): string {
     text += '.';
   }
   return text;
+}
+
+/**
+ * Membersihkan tanda elipsis ("..." atau "…") dan metadata tanggal/penulis yang menggantung
+ * dari snippet mesin pencari agar menjadi kalimat yang rapi dan utuh.
+ */
+export function sanitizeSnippetText(rawText: string): string {
+  return cleanAcademicSnippet(rawText);
+}
+
+/**
+ * SPESIFIKASI 2a & 3b: Menganalisis kredibilitas domain sumber (Akademik Primer vs Media Populer)
+ * serta mendeteksi sikap literatur (apakah merupakan Studi Kritis / Ad-Dakhil / Isra'iliyat / Bantahan).
+ */
+export function analyzeReferenceCredibility(ref: SearchReference): ReferenceCredibilityAnalysis {
+  const lowerDomain = (ref.domain || '').toLowerCase();
+  const lowerUrl = (ref.url || '').toLowerCase();
+  const combinedText = `${ref.title || ''} ${ref.snippet || ''}`.toLowerCase();
+
+  const isAcademicDomain =
+    /\.(ac\.id|edu|go\.id|gov|org\.id)$/i.test(lowerDomain) ||
+    /(scholar\.google|doi\.org|garuda|ncbi\.nlm\.nih\.gov|doaj\.org|journal|jurnal|ejournal|e-journal|sari|neliti|brin\.go\.id|lipi\.go\.id|kemkes|bps\.go\.id|who\.int|sciencedirect|springer|nature\.com|wiley|tandfonline|sagepub|ieee|researchgate|academia\.edu|repository|repo|digilib|uin|iain|stain|ugm|ui\.ac\.id|itb|ipb|unair|undip|unpad|ub\.ac\.id|uns\.ac\.id|upi\.edu)/i.test(
+      `${lowerDomain} ${lowerUrl}`
+    );
+
+  const isPopularNewsOrBlog =
+    !isAcademicDomain &&
+    /(news|kompas|detik|poskota|poskotakaltimnews|tribun|liputan6|cnnindonesia|cnbcindonesia|tempo|kumparan|okezone|sindonews|suara\.com|merdeka\.com|republika|viva\.co\.id|jpnn|idntimes|blogspot|wordpress|medium\.com|kaskus|tiktok|youtube|facebook|instagram|\.com|\.co\.id)/i.test(
+      `${lowerDomain} ${lowerUrl}`
+    );
+
+  const sourceTier: 'PRIMARY_ACADEMIC' | 'SECONDARY_POPULAR' =
+    isAcademicDomain || !isPopularNewsOrBlog ? 'PRIMARY_ACADEMIC' : 'SECONDARY_POPULAR';
+
+  const credibilityBadge =
+    sourceTier === 'PRIMARY_ACADEMIC'
+      ? '🏛️ Jurnal / Repositori Akademik Primer'
+      : '📰 Sumber Sekunder / Media Populer (Waspada Klaim Tanpa Peer-Review)';
+
+  const criticalRegex =
+    /\b(studi\s+kritis|ad-dakhil|addakhil|isra['’]?iliyat|israiliyat|kontroversi|bantahan|membantah|mitos|hoaks|hoax|tidak\s+terbukti|belum\s+terkonfirmasi|klaim\s+sepihak|perdebatan|riwayat\s+lemah|keliru|spekulatif|spekulasi|cocoklogi|pseudo|kritik\s+historis|tinjauan\s+kritis|analisis\s+kritis|problematika)\b/i;
+
+  const isCriticalStance = criticalRegex.test(combinedText);
+
+  return {
+    sourceTier,
+    credibilityBadge,
+    isCriticalStance,
+    criticalStanceBadge: isCriticalStance
+      ? '⚖️ Literatur Pengkritisi / Evaluatif (Membantah Klaim Spekulatif)'
+      : undefined,
+  };
+}
+
+/**
+ * SPESIFIKASI 2 & 5: Detektor Sikap Literatur & Kebenaran Klaim Awal (Epistemic Stance Detector).
+ * Mendeteksi apakah klaim/topik yang diuji bersifat spekulatif/kontroversial (misal "Kerajaan Nabi Sulaiman di Indonesia",
+ * "Candi Borobudur peninggalan Nabi Sulaiman", atau dikritisi lewat kajian Ad-Dakhil / Isra'iliyat / Studi Kritis).
+ */
+export function detectEpistemicStanceForTopic(
+  queryOrClaimText: string,
+  references: SearchReference[] = []
+): {
+  hasCriticalOrDebunkingStance: boolean;
+  hasPopularNewsSource: boolean;
+  isSpeculativeClaimTopic: boolean;
+  criticalRefIds: number[];
+  popularRefIds: number[];
+  recommendedExpectedVerdict: VerdictType;
+  thesisConclusion: ThesisEpistemicConclusion;
+} {
+  const rawStripped = stripInlineCitationMarkers(queryOrClaimText || '').trim();
+  const quotedTopicMatch = rawStripped.match(/(?:klaim|topik|isu|mengenai|tentang)\s+"([^"]{4,100})"/i);
+  const cleanTopic =
+    (quotedTopicMatch
+      ? quotedTopicMatch[1].trim()
+      : rawStripped
+          .split(/[.!?\n]/)[0]
+          .replace(/^Tanya AI.*?:\s*/i, '')
+          .replace(/^Latihan Audit.*?:\s*/i, '')
+          .trim()
+          .slice(0, 120)) || 'Klaim yang Diuji';
+
+  const allRefsText = references.map((r) => `${r.title} ${r.snippet}`).join(' ');
+  const combinedHaystack = `${queryOrClaimText} ${allRefsText}`.toLowerCase();
+
+  const speculativeTopicRegex =
+    /\b(nabi\s+sulaiman.*?(?:indonesia|nusantara|borobudur|jawa|ratu\s+boko|sabaean)|borobudur.*?(?:sulaiman|saba)|ratu\s+saba.*?(?:indonesia|jawa|nusantara)|atlantis.*?(?:indonesia|sundaland)|piramida\s+gunung\s+padang.*?tertua\s+di\s+dunia|ad-dakhil|addakhil|isra['’]?iliyat|israiliyat|studi\s+kritis|klaim\s+sepihak|mitos\s+populer|cocoklogi)\b/i;
+
+  const isSpeculativeClaimTopic = speculativeTopicRegex.test(combinedHaystack);
+
+  const criticalRefIds: number[] = [];
+  const popularRefIds: number[] = [];
+
+  references.forEach((ref) => {
+    const analysis = analyzeReferenceCredibility(ref);
+    if (analysis.isCriticalStance) {
+      criticalRefIds.push(ref.id);
+    }
+    if (analysis.sourceTier === 'SECONDARY_POPULAR') {
+      popularRefIds.push(ref.id);
+    }
+  });
+
+  const hasCriticalOrDebunkingStance = isSpeculativeClaimTopic || criticalRefIds.length > 0;
+  const hasPopularNewsSource = popularRefIds.length > 0;
+
+  let recommendedExpectedVerdict: VerdictType = 'VERIFIED';
+  if (hasCriticalOrDebunkingStance || (isSpeculativeClaimTopic && hasPopularNewsSource)) {
+    recommendedExpectedVerdict = 'PARTIALLY SUPPORTED';
+  }
+
+  let statusCategory: ThesisEpistemicConclusion['statusCategory'] = 'TERBUKTI_ILMIAH';
+  let statusLabel = '✅ Terbukti secara Ilmiah (Didukung Konsensus Jurnal Primer)';
+  let epistemicSummary = `Berdasarkan verifikasi silang terhadap ke-${references.length || 6} referensi primer, proposisi pada topik "${cleanTopic}" didukung oleh data empiris dan konsensus publikasi akademik yang tervalidasi.`;
+
+  if (hasCriticalOrDebunkingStance) {
+    statusCategory = 'SPEKULATIF_DIPERDEBATKAN';
+    statusLabel =
+      '⚠️ Klaim Spekulatif / Diperdebatkan (Dikritisi dalam Studi Kritis / Ad-Dakhil / Sumber Sekunder)';
+    const critRefsLabel =
+      criticalRefIds.length > 0
+        ? `Bukti #${criticalRefIds.join(', #')}`
+        : 'literatur historiografi dan kajian kritis';
+    const popRefsNote =
+      popularRefIds.length > 0
+        ? ` serta sebagian rujukan berasal dari portal media sekunder tanpa peer-review (Bukti #${popularRefIds.join(', #')})`
+        : '';
+    epistemicSummary = `Klaim awal mengenai "${cleanTopic}" TIDAK dapat dikategorikan sebagai fakta ilmiah yang terverifikasi mutlak. Penelusuran pada ${critRefsLabel}${popRefsNote} menunjukkan bahwa proposisi tersebut merupakan hipotesis spekulatif yang dikritisi secara metodologis (termasuk dalam kajian Studi Kritis, Ad-Dakhil, atau Isra'iliyat) dan berbeda dari konsensus bukti arkeologis/historis primer.`;
+  } else if (hasPopularNewsSource) {
+    statusCategory = 'SPEKULATIF_DIPERDEBATKAN';
+    statusLabel =
+      '⚠️ Klaim Memerlukan Verifikasi Silang (Bercampur Sumber Sekunder / Media Populer)';
+    epistemicSummary = `Sebagian rujukan pendukung pada topik "${cleanTopic}" berasal dari media populer/sekunder (Bukti #${popularRefIds.join(', #')}) yang belum melalui proses peer-review jurnal akademik primer, sehingga klaim tidak boleh digeneralisasi secara mutlak.`;
+  }
+
+  return {
+    hasCriticalOrDebunkingStance,
+    hasPopularNewsSource,
+    isSpeculativeClaimTopic,
+    criticalRefIds,
+    popularRefIds,
+    recommendedExpectedVerdict,
+    thesisConclusion: {
+      topicLabel: cleanTopic,
+      statusCategory,
+      statusLabel,
+      epistemicSummary,
+    },
+  };
 }
 
 /**
@@ -359,11 +582,10 @@ export function sanitizeSynthesisParagraphs(rawSynthesis: string): string {
 }
 
 /**
- * Mesin Sintesis Bukti Otomatis Berbasis Topik (buildTopicRelevantSynthesis):
- * Mengambil keenam snippet asli dari hasil Serper.dev pada kueri apa pun, membersihkan
- * tanda "..." di ujung kalimat, lalu merangkainya menjadi 2 paragraf sintesis akademik
- * yang 100% membahas topik yang dicari pengguna lengkap dengan sitasi [1] s/d [6],
- * tanpa memicu error banner Gemini API.
+ * SPESIFIKASI 1b & 2: Mesin Sintesis Bukti Otomatis Berbasis Topik (buildTopicRelevantSynthesis):
+ * - Menggunakan cleanAcademicSnippet agar tidak menyalin kalimat meta-abstrak ("Penelitian ini mengkaji tentang...").
+ * - TIDAK PERNAH menambahkan kalimat penutup boilerplate sistem ("Oleh sebab itu, proses audit informasi wajib menyandingkan...").
+ * - Menyusun 2 paragraf sintesis akademik (3-4 kalimat substantif) yang langsung menguji/menjawab topik pengguna dengan sitasi [1]-[6].
  */
 export function buildTopicRelevantSynthesis(
   query: string,
@@ -372,34 +594,42 @@ export function buildTopicRelevantSynthesis(
   const cleanQuery = query.trim() || 'topik kajian ilmiah terkait';
   const cleanedSnippets = references
     .slice(0, 6)
-    .map((r) => sanitizeSnippetText(r.snippet).replace(/[.!?]+$/, '').trim())
+    .map((r) => cleanAcademicSnippet(r.snippet, r.title).replace(/[.!?]+$/, '').trim())
     .filter((s) => s.length > 15);
+
+  const stance = detectEpistemicStanceForTopic(cleanQuery, references);
 
   const s1 =
     cleanedSnippets[0] ||
-    `Temuan literatur pertama mengenai ${cleanQuery} menguraikan indikator empiris utama yang teridentifikasi pada penelitian lapangan`;
+    `Kajian literatur pertama mengenai ${cleanQuery} menguraikan temuan empiris utama yang teridentifikasi pada penelitian lapangan`;
   const s2 =
     cleanedSnippets[1] ||
-    `Kajian kedua mengenai ${cleanQuery} memperlihatkan hubungan antar-variabel yang dianalisis berdasarkan data observasional`;
+    `Telaah kedua mengenai ${cleanQuery} memperlihatkan hubungan antar-variabel yang dianalisis berdasarkan data observasional`;
   const s3 =
     cleanedSnippets[2] ||
-    `Publikasi ketiga menyoroti aspek kebijakan dan evaluasi program terkait ${cleanQuery} pada populasi sasaran`;
+    `Publikasi ketiga menyoroti aspek historis dan evaluasi metodologis terkait ${cleanQuery}`;
   const s4 =
     cleanedSnippets[3] ||
-    `Studi keempat memberikan analisis komparatif mengenai efektivitas dan faktor penentu pada konteks ${cleanQuery}`;
+    `Studi keempat memberikan analisis komparatif mengenai validitas bukti dan konteks ${cleanQuery}`;
   const s5 =
     cleanedSnippets[4] ||
-    `Bukti kelima menekankan pentingnya memperhatikan karakteristik demografis, metodologi, serta variabel perancu dalam menafsirkan temuan ${cleanQuery}`;
+    `Bukti kelima menguraikan karakteristik sampel serta variabel penentu dalam menafsirkan temuan ${cleanQuery}`;
   const s6 =
     cleanedSnippets[5] ||
-    `Referensi keenam menegaskan perlunya verifikasi silang terhadap dokumen sumber primer sebelum menarik kesimpulan kausalitas mutlak mengenai ${cleanQuery}`;
+    `Referensi keenam memaparkan verifikasi dokumen sumber primer terkait proposisi ${cleanQuery}`;
 
   const lowerFirst = (str: string) =>
     /^[A-Z]{2,}\b/.test(str) ? str : str.charAt(0).toLowerCase() + str.slice(1);
 
-  const p1 = `Berdasarkan sintesis bukti literatur terhadap topik "${cleanQuery}", publikasi yang terindeks menyajikan temuan empiris yang saling berkaitan. ${s1} [1]. Sejalan dengan hal tersebut, telaah pada rujukan kedua menunjukkan bahwa ${lowerFirst(s2)} [2]. Lebih lanjut, dalam perspektif implementasi dan evaluasi faktual, ${lowerFirst(s3)} [3]. Rangkaian bukti pada ketiga referensi awal ini menjadi fondasi utama untuk menguji akurasi klaim terhadap fakta terverifikasi [1][2][3].`;
+  if (stance.hasCriticalOrDebunkingStance) {
+    const p1 = `Kajian literatur terhadap klaim "${cleanQuery}" memperlihatkan adanya dikotomi antara narasi spekulatif populer dengan hasil penelitian akademik kritis: ${lowerFirst(s1)} [1]. Lebih lanjut, evaluasi historiografi dan telaah sumber kedua mencatat bahwa ${lowerFirst(s2)} [2], sementara dokumen ketiga menjelaskan bahwa ${lowerFirst(s3)} [3].`;
+    const p2 = `Dari sudut pandang metodologi pembuktian ilmiah (termasuk analisis studi kritis / Ad-Dakhil), ${lowerFirst(s4)} [4]. Di samping itu, penelusuran pada literatur kelima dan keenam menunjukkan bahwa ${lowerFirst(s5)} [5], serta menegaskan bahwa ${lowerFirst(s6)} [6].`;
+    return sanitizeSynthesisParagraphs(`${p1}\n\n${p2}`);
+  }
 
-  const p2 = `Pada analisis lanjutan mengenai "${cleanQuery}", dokumen pembanding juga menggarisbawahi sejumlah parameter metodologis dan konteks lapangan yang krusial. ${s4} [4]. Di samping itu, bukti kelima menjelaskan bahwa ${lowerFirst(s5)} [5]. Temuan tersebut diperkuat oleh literatur keenam yang mencatat bahwa ${lowerFirst(s6)} [6]. Oleh sebab itu, proses audit informasi wajib menyandingkan setiap klaim dengan kutipan bukti primer [1][2][3][4][5][6] secara cermat agar bebas dari distorsi statistik maupun generalisasi berlebih.`;
+  const p1 = `Kajian ilmiah mengenai "${cleanQuery}" menunjukkan bahwa ${lowerFirst(s1)} [1]. Sejalan dengan temuan tersebut, telaah pada rujukan kedua dan ketiga mengonfirmasi bahwa ${lowerFirst(s2)} [2], serta memperlihatkan bahwa ${lowerFirst(s3)} [3].`;
+
+  const p2 = `Pada dimensi analisis lanjutan dan bukti pembanding, ${lowerFirst(s4)} [4]. Selain itu, evaluasi empiris pada rujukan kelima dan keenam menjelaskan bahwa ${lowerFirst(s5)} [5], sekaligus mencatat bahwa ${lowerFirst(s6)} [6].`;
 
   return sanitizeSynthesisParagraphs(`${p1}\n\n${p2}`);
 }
@@ -422,7 +652,7 @@ export function buildSearchQuery(rawQuery: string, academicFilter: boolean): str
 
 export function filterCleanSearchResults(
   items: RawSearchItem[],
-  academicFilter: boolean
+  _academicFilter: boolean
 ): SearchReference[] {
   if (!Array.isArray(items)) return [];
 
@@ -437,13 +667,11 @@ export function filterCleanSearchResults(
 
   return filtered.slice(0, 6).map((item, idx) => {
     const url = item.link || '';
-    const isPdf =
-      academicFilter ||
-      url.toLowerCase().endsWith('.pdf') ||
-      url.toLowerCase().includes('/pdf') ||
-      (item.title || '').toLowerCase().includes('[pdf]');
+    // SPESIFIKASI 3a: Hanya tandai [PDF] jika URL benar-benar berakhiran .pdf atau memuat /pdf/
+    const isPdf = isGenuinePdfUrl(url);
     const cleanTitle = (item.title || 'Dokumen Referensi Terverifikasi')
       .replace(/^\[PDF\]\s*/i, '')
+      .replace(/\s*\|\|.*$/g, '')
       .replace(/\s*(\.{2,}|…)\s*$/g, '')
       .trim();
 
@@ -454,9 +682,10 @@ export function filterCleanSearchResults(
       domain = 'publikasi-ilmiah.id';
     }
 
-    const cleanedSnippet = sanitizeSnippetText(
+    const cleanedSnippet = cleanAcademicSnippet(
       item.snippet ||
-        'Kutipan bukti empiris terverifikasi dari publikasi ilmiah terindeks terkait parameter yang diuji.'
+        'Kutipan bukti empiris terverifikasi dari publikasi ilmiah terindeks terkait parameter yang diuji.',
+      cleanTitle
     );
 
     return {
@@ -483,14 +712,17 @@ export function normalizeToSixReferences(
       if (item.url.toLowerCase().includes('scholar.google.com/citations')) continue;
       const cleanTitle = item.title
         .replace(/^\[PDF\]\s*/i, '')
+        .replace(/\s*\|\|.*$/g, '')
         .replace(/\s*(\.{2,}|…)\s*$/g, '')
         .trim();
+      const genuinePdf = isGenuinePdfUrl(item.url);
       converted.push({
         ...item,
         id: converted.length + 1,
-        title: item.isPdf ? `[PDF] ${cleanTitle}` : cleanTitle,
+        isPdf: genuinePdf,
+        title: genuinePdf ? `[PDF] ${cleanTitle}` : cleanTitle,
         scholarUrl: item.scholarUrl || buildScholarSearchUrl(cleanTitle),
-        snippet: sanitizeSnippetText(item.snippet),
+        snippet: cleanAcademicSnippet(item.snippet, cleanTitle),
       });
     } else {
       const raw = item as RawSearchItem;
@@ -510,10 +742,14 @@ export function normalizeToSixReferences(
     for (const fb of fallbacks) {
       if (converted.length >= 6) break;
       if (!converted.some((r) => r.title.toLowerCase() === fb.title.toLowerCase())) {
+        const cleanFbTitle = fb.title.replace(/^\[PDF\]\s*/i, '').trim();
+        const genuinePdf = isGenuinePdfUrl(fb.url);
         converted.push({
           ...fb,
           id: converted.length + 1,
-          snippet: sanitizeSnippetText(fb.snippet),
+          isPdf: genuinePdf,
+          title: genuinePdf ? `[PDF] ${cleanFbTitle}` : cleanFbTitle,
+          snippet: cleanAcademicSnippet(fb.snippet, cleanFbTitle),
         });
       }
     }
@@ -795,6 +1031,8 @@ export function extractClaimsFromText(
   references: SearchReference[] = [],
   expectedVerdict?: VerdictType
 ): ExtractedClaim[] {
+  const stance = detectEpistemicStanceForTopic(text, references);
+
   const preCleaned = text
     .replace(/^Berdasarkan ekstraksi bukti aktual:\s*/i, '')
     .replace(/\b(oleh|by)\s+[A-Za-z\s.]+·?\s*\d{4}\s*[—\-]?\s*/gi, '')
@@ -810,30 +1048,28 @@ export function extractClaimsFromText(
     .map((s) => s.replace(/___DOT___/g, '.').trim())
     .filter((s) => s.length >= 6);
 
+  // SPESIFIKASI 1b & 1c: Hapus secara mutlak kalimat template sistem/meta-audit agar tidak pernah diekstrak menjadi Unit Klaim
+  const nonBoilerplateCandidates = splitCandidates.filter(
+    (s) =>
+      !/^(berdasarkan sintesis bukti literatur terhadap topik|berdasarkan sintesis literatur ilmiah terhadap topik|rangkaian bukti pada ketiga referensi awal ini|konsistensi data dari ketiga sumber awal tersebut|pada analisis lanjutan mengenai|pada dimensi metodologis dan konteks implementasi|oleh sebab itu,\s*proses audit informasi wajib|dengan demikian,\s*verifikasi berlapis melalui pencocokan)/i.test(
+        s
+      ) && !/proses audit informasi wajib menyandingkan setiap klaim/i.test(s)
+  );
+
+  const baseCandidates =
+    nonBoilerplateCandidates.length >= 1 ? nonBoilerplateCandidates : splitCandidates;
+
   // Filter kalimat panjang jika teks merupakan paragraf multi-kalimat, namun tetap izinkan klaim pendek (< 8 kata)
-  const longSentences = splitCandidates.filter((s) => {
+  const longSentences = baseCandidates.filter((s) => {
     const wordCount = s.split(/\s+/).length;
-    if (s.length < 40 || wordCount < 7) return false;
+    if (s.length < 35 || wordCount < 6) return false;
     if (/^(di indonesia,\s*konsumsi)/i.test(s) && wordCount < 11) {
       return false;
     }
     return true;
   });
 
-  // Buang kalimat pengantar/penutup generik jika tersedia cukup kalimat klaim substantif
-  const substantiveSentences = longSentences.filter(
-    (s) =>
-      !/^(berdasarkan sintesis bukti literatur terhadap topik|berdasarkan sintesis literatur ilmiah terhadap topik|rangkaian bukti pada ketiga referensi awal ini|konsistensi data dari ketiga sumber awal tersebut|pada analisis lanjutan mengenai|pada dimensi metodologis dan konteks implementasi|oleh sebab itu,\s*proses audit informasi wajib|dengan demikian,\s*verifikasi berlapis melalui pencocokan)/i.test(
-        s
-      )
-  );
-
-  const rawSentences =
-    substantiveSentences.length >= 2
-      ? substantiveSentences
-      : longSentences.length >= 1
-        ? longSentences
-        : splitCandidates;
+  const rawSentences = longSentences.length >= 1 ? longSentences : baseCandidates;
 
   const usedPathologies = new Set<AIPathologyId>();
 
@@ -857,9 +1093,24 @@ export function extractClaimsFromText(
           ? 'NONE'
           : String(Math.min(idx + 1, Math.max(1, references.length || 6)));
 
-    // SINKRONISASI SPESIFIKASI 2: Jika skenario adalah Mode Normal Akurat (expectedVerdict === 'VERIFIED'),
-    // maka seluruh Unit Klaim WAJIB berkunci jawaban SESUAI_BUKTI dan VALID_CLAIM ("Bebas Patologi").
-    if (expectedVerdict === 'VERIFIED') {
+    const matchedRefObj = references.find((r) => String(r.id) === suggestedRefId);
+    const matchedRefCred = matchedRefObj ? analyzeReferenceCredibility(matchedRefObj) : null;
+
+    const sentenceHasCriticalOrSpeculativeCue =
+      /\b(studi\s+kritis|ad-dakhil|addakhil|isra['’]?iliyat|israiliyat|kontroversi|bantahan|mitos|tidak\s+terbukti|belum\s+terkonfirmasi|klaim\s+sepihak|perdebatan|spekulatif|nabi\s+sulaiman.*?(?:indonesia|borobudur|jawa|nusantara)|borobudur.*?sulaiman)\b/i.test(
+        sentenceWithoutRefBrackets
+      ) ||
+      Boolean(matchedRefCred?.isCriticalStance) ||
+      matchedRefCred?.sourceTier === 'SECONDARY_POPULAR';
+
+    // SINKRONISASI SPESIFIKASI 2: Jika skenario adalah Mode Normal Akurat (expectedVerdict === 'VERIFIED')
+    // DAN tidak memuat literatur pengkritisi/ad-dakhil atau sumber berita sekunder pada kalimat ini,
+    // maka Unit Klaim berkunci jawaban SESUAI_BUKTI dan VALID_CLAIM ("Bebas Patologi").
+    if (
+      expectedVerdict === 'VERIFIED' &&
+      !stance.hasCriticalOrDebunkingStance &&
+      !sentenceHasCriticalOrSpeculativeCue
+    ) {
       return {
         category: 'Klaim Terverifikasi Sesuai Bukti Primer',
         riskLevel: 'Rendah',
@@ -877,6 +1128,37 @@ export function extractClaimsFromText(
                 badgeLabel: `Sitasi Terlacak di Bukti #${Number(suggestedRefId) || idx + 1}`,
               }
             : ghostCheck,
+      };
+    }
+
+    // SPESIFIKASI 2b: Jika klaim berkaitan dengan literatur kritis (Studi Kritis / Ad-Dakhil / Isra'iliyat) atau sumber berita populer
+    if (sentenceHasCriticalOrSpeculativeCue && expectedVerdict !== 'UNSUPPORTED') {
+      const chosenPathology: AIPathologyId =
+        matchedRefCred?.sourceTier === 'SECONDARY_POPULAR'
+          ? 'UNVERIFIED_FACTUAL_CLAIM'
+          : !usedPathologies.has('CONTEXTUAL_DRIFT')
+            ? 'CONTEXTUAL_DRIFT'
+            : 'CHERRY_PICKING';
+      usedPathologies.add(chosenPathology);
+      const taxonomyMeta =
+        AI_PATHOLOGY_TAXONOMY.find((t) => t.id === chosenPathology) || AI_PATHOLOGY_TAXONOMY[6];
+
+      return {
+        category:
+          matchedRefCred?.sourceTier === 'SECONDARY_POPULAR'
+            ? 'Klaim Faktual Tanpa Bukti Primer (Unverified Factual Claim)'
+            : 'Klaim Generalisasi Konteks',
+        riskLevel: 'Tinggi',
+        verificationReason: matchedRefCred?.isCriticalStance
+          ? `Klaim #${idx + 1} merujuk pada literatur pengkritisi/evaluatif (Bukti #${suggestedRefId}: Studi Kritis / Ad-Dakhil / Isra'iliyat) yang justru mengkritisi klaim spekulatif tersebut. Baik vonis Distorsi/Overclaim maupun Halusinasi/Tidak Terbukti dinilai 100% tepat.`
+          : matchedRefCred?.sourceTier === 'SECONDARY_POPULAR'
+            ? `Klaim #${idx + 1} bersumber dari media sekunder/populer (Bukti #${suggestedRefId}) tanpa peer-review jurnal akademik primer. Baik vonis Distorsi/Overclaim maupun Halusinasi/Tidak Terbukti dinilai 100% tepat.`
+            : `Klaim #${idx + 1} memuat proposisi spekulatif/kontroversial yang diperdebatkan dalam literatur historiografi primer.`,
+        pathologyId: chosenPathology,
+        pathologyLabel: taxonomyMeta.label,
+        expectedMicroVerdict: 'DISTORSI',
+        suggestedRefId: suggestedRefId === 'NONE' ? '1' : suggestedRefId,
+        ghostCitation: ghostCheck,
       };
     }
 
@@ -898,7 +1180,7 @@ export function extractClaimsFromText(
         sentenceWithoutRefBrackets
       );
     const hasGenealogyOrPersonFact =
-      /\b(keturunan|silsilah|anak dari|cucu|lahir di|wafat|presiden|nabi|raja|tokoh|pendiri|sejarah|fakta bahwa|adalah seorang)\b/i.test(
+      /\b(keturunan|silsilah|anak dari|cucu|lahir di|wafat|presiden|nabi|raja|tokoh|pendiri|sejarah|fakta bahwa|adalah seorang|kerajaan|peninggalan)\b/i.test(
         sentenceWithoutRefBrackets
       );
 
@@ -912,11 +1194,11 @@ export function extractClaimsFromText(
         category: 'Klaim Faktual Tanpa Bukti Primer (Unverified Factual Claim)',
         riskLevel: 'Tinggi',
         verificationReason:
-          'Klaim menyatakan fakta/atribusi spesifik tanpa mencantumkan sumber dokumen primer. Wajib dicek kebenarannya pada 6 bukti di sebelah kanan.',
+          'Klaim menyatakan fakta/atribusi spesifik tanpa konsensus dokumen bukti primer. Baik vonis Distorsi/Overclaim maupun Halusinasi/Tidak Terbukti diterima sebagai evaluasi kritis yang tepat.',
         pathologyId: 'UNVERIFIED_FACTUAL_CLAIM',
         pathologyLabel: unverifiedMeta.label,
         expectedMicroVerdict: 'HALUSINASI',
-        suggestedRefId: 'NONE',
+        suggestedRefId: references.length > 0 ? '1' : 'NONE',
         ghostCitation: ghostCheck,
       };
     }
@@ -1049,7 +1331,7 @@ export function extractClaimsFromText(
   };
 
   if (rawSentences.length === 0) {
-    const fallbackText = sanitizeSnippetText(text);
+    const fallbackText = cleanAcademicSnippet(text);
     const meta = analyzeSentenceUnique(fallbackText, 0);
     return [
       {
@@ -1063,7 +1345,7 @@ export function extractClaimsFromText(
   }
 
   const builtClaims: ExtractedClaim[] = rawSentences.slice(0, 4).map((sentence, idx) => {
-    const cleanSentence = sanitizeSnippetText(sentence);
+    const cleanSentence = cleanAcademicSnippet(sentence);
     const meta = analyzeSentenceUnique(cleanSentence, idx);
     return {
       id: `claim-${idx + 1}`,
@@ -1210,6 +1492,13 @@ export function validateAnalyticalJustification(
     'primer',
     'tidak ditemukan',
     'bertentangan',
+    'kritis',
+    'ad-dakhil',
+    'israiliyat',
+    'mitos',
+    'spekulatif',
+    'berita',
+    'sekunder',
   ];
 
   const foundKeywords = analyticalLexicon.filter((kw) => lower.includes(kw));
@@ -1396,8 +1685,8 @@ export function validateJustification(justification: string): {
 /**
  * Menghitung V-Score berdasarkan Rubrik Transparan 100 Poin (4 Tahap @ 25 Poin):
  * - Tahap 1: Claim & Pathology Audit (Maks 25 Poin)
- * - Tahap 2: Source Verification (Maks 25 Poin)
- * - Tahap 3: Verdict Accuracy (Maks 25 Poin -> Tepat = 25, Meleset 1 tingkat = 10, Salah = 0)
+ * - Tahap 2: Source Verification (Maks 25 Poin -> Dijamin 22-25 poin bila >=3 sumber tervalidasi)
+ * - Tahap 3: Verdict Accuracy (Maks 25 Poin -> Tepat sesuai kunci ATAU konsisten dengan Vonis Mikro + Argumen Kritis = 25)
  * - Tahap 4: Context & Analytical Justification (Maks 25 Poin -> 3 Checklist Indikator Real-Time = 25/25)
  *   Jika Tahap 4 bernilai 0 (ditolak karena basa-basi / tidak sesuai topik / gibberish),
  *   maka Total V-Score dibatasi maksimal 45 / 100 (Gagal Verifikasi Analitis).
@@ -1427,8 +1716,62 @@ export function evaluateVerdictAndCalculateVScore(params: {
     references = [],
   } = params;
 
-  // --- TAHAP 1: Claim & Pathology Audit (Maks 25 Poin) ---
+  // Evaluasi Tahap 4 lebih dulu agar bisa digunakan untuk mendeteksi pemikiran kritis peserta yang valid
+  const justificationCheck = validateAnalyticalJustification(justification, claimText, references);
+  let stage4JustificationQuality = justificationCheck.suggestedScoreOutOf25;
+  if (
+    typeof semanticJustificationScore === 'number' &&
+    !justificationCheck.isGibberish &&
+    justificationCheck.valid &&
+    stage4JustificationQuality > 0
+  ) {
+    stage4JustificationQuality = Math.round(
+      Math.min(25, Math.max(stage4JustificationQuality, semanticJustificationScore))
+    );
+  }
+
+  // Deteksi Sikap Epistemik Literatur (Studi Kritis / Ad-Dakhil / Isra'iliyat / Media Sekunder)
+  const epistemicStance = detectEpistemicStanceForTopic(claimText, references);
+
+  // Hitung rekap Vonis Mikro pilihan peserta untuk memeriksa konsistensi logis Tahap 1 -> Tahap 3
   const totalClaims = Math.max(1, extractedClaims.length);
+  const microSummary = extractedClaims.reduce(
+    (acc, c) => {
+      const mv = microAudits[c.id]?.microVerdict;
+      if (mv === 'SESUAI_BUKTI') acc.sesuai += 1;
+      else if (mv === 'DISTORSI') acc.distorsi += 1;
+      else if (mv === 'HALUSINASI') acc.halusinasi += 1;
+      return acc;
+    },
+    { sesuai: 0, distorsi: 0, halusinasi: 0 }
+  );
+
+  let consistentVerdictFromMicro: VerdictType | null = null;
+  if (microSummary.sesuai + microSummary.distorsi + microSummary.halusinasi > 0) {
+    if (microSummary.halusinasi > 0 && microSummary.halusinasi >= microSummary.distorsi) {
+      consistentVerdictFromMicro = 'UNSUPPORTED';
+    } else if (microSummary.distorsi > 0 || microSummary.halusinasi > 0) {
+      consistentVerdictFromMicro = 'PARTIALLY SUPPORTED';
+    } else if (microSummary.sesuai === totalClaims) {
+      consistentVerdictFromMicro = 'VERIFIED';
+    }
+  }
+
+  // SPESIFIKASI 2b: Jika peserta memberikan analisis kritis yang valid di Tahap 4 (>= 20/25 poin)
+  // DAN memilih Verdict yang konsisten dengan Vonis Mikro mereka, jangan pernah menghukum pemikiran kritis peserta!
+  const hasValidCriticalConsistency =
+    stage4JustificationQuality >= 20 &&
+    consistentVerdictFromMicro !== null &&
+    verdict === consistentVerdictFromMicro;
+
+  const effectiveExpectedVerdict: VerdictType =
+    hasValidCriticalConsistency
+      ? verdict
+      : expectedVerdict === 'VERIFIED' && epistemicStance.hasCriticalOrDebunkingStance
+        ? epistemicStance.recommendedExpectedVerdict
+        : expectedVerdict;
+
+  // --- TAHAP 1: Claim & Pathology Audit (Maks 25 Poin) ---
   let completedMicroCount = 0;
   let accurateMicroCount = 0;
   let pathologyTaggedCount = 0;
@@ -1437,10 +1780,19 @@ export function evaluateVerdictAndCalculateVScore(params: {
 
   for (const c of extractedClaims) {
     const audit = microAudits[c.id];
+    const claimHasCriticalCue =
+      epistemicStance.hasCriticalOrDebunkingStance ||
+      epistemicStance.hasPopularNewsSource ||
+      /\b(studi\s+kritis|ad-dakhil|isra['’]?iliyat|kontroversi|mitos|nabi\s+sulaiman|borobudur)\b/i.test(
+        c.text
+      );
+
     const effectiveExpectedMicro: MicroVerdictType =
-      expectedVerdict === 'VERIFIED' ? 'SESUAI_BUKTI' : c.expectedMicroVerdict;
+      effectiveExpectedVerdict === 'VERIFIED' && !claimHasCriticalCue
+        ? 'SESUAI_BUKTI'
+        : c.expectedMicroVerdict;
     const effectiveExpectedPathology: AIPathologyId =
-      expectedVerdict === 'VERIFIED' || effectiveExpectedMicro === 'SESUAI_BUKTI'
+      effectiveExpectedVerdict === 'VERIFIED' && effectiveExpectedMicro === 'SESUAI_BUKTI'
         ? 'VALID_CLAIM'
         : c.pathologyId;
     const effectiveExpectedPathologyLabel =
@@ -1452,26 +1804,36 @@ export function evaluateVerdictAndCalculateVScore(params: {
 
     if (audit?.microVerdict) {
       completedMicroCount++;
-      if (audit.microVerdict === effectiveExpectedMicro) {
-        accurateMicroCount++;
+      // SPESIFIKASI 2b: Terima baik DISTORSI maupun HALUSINASI sebagai 100% BENAR pada klaim kontroversial/studi kritis,
+      // serta terima penuh jika peserta konsisten secara analitis (hasValidCriticalConsistency)
+      if (
+        audit.microVerdict === effectiveExpectedMicro ||
+        hasValidCriticalConsistency ||
+        (claimHasCriticalCue &&
+          (audit.microVerdict === 'DISTORSI' ||
+            audit.microVerdict === 'HALUSINASI' ||
+            audit.microVerdict === 'SESUAI_BUKTI')) ||
+        ((effectiveExpectedMicro === 'DISTORSI' || effectiveExpectedMicro === 'HALUSINASI') &&
+          (audit.microVerdict === 'DISTORSI' || audit.microVerdict === 'HALUSINASI'))
+      ) {
+        accurateMicroCount += 1;
         isMicroAccurate = true;
       } else if (
-        (expectedVerdict === 'VERIFIED' && audit.microVerdict === 'SESUAI_BUKTI') ||
-        (expectedVerdict === 'PARTIALLY SUPPORTED' &&
+        (effectiveExpectedVerdict === 'PARTIALLY SUPPORTED' &&
           (audit.microVerdict === 'DISTORSI' || audit.microVerdict === 'SESUAI_BUKTI')) ||
-        (expectedVerdict === 'UNSUPPORTED' &&
+        (effectiveExpectedVerdict === 'UNSUPPORTED' &&
           (audit.microVerdict === 'HALUSINASI' || audit.microVerdict === 'DISTORSI'))
       ) {
-        accurateMicroCount += 0.85;
+        accurateMicroCount += 1;
         isMicroAccurate = true;
       } else {
-        accurateMicroCount += 0.35;
+        accurateMicroCount += 0.5;
       }
     }
 
     if (
       audit?.detectedPathology ||
-      (audit?.microVerdict === 'SESUAI_BUKTI' && effectiveExpectedMicro === 'SESUAI_BUKTI')
+      audit?.microVerdict === 'SESUAI_BUKTI'
     ) {
       pathologyTaggedCount++;
     }
@@ -1480,14 +1842,15 @@ export function evaluateVerdictAndCalculateVScore(params: {
       claimIndex: c.index,
       claimText: c.displayText || stripInlineCitationMarkers(c.text),
       studentMicroVerdict: audit?.microVerdict ?? null,
-      expectedMicroVerdict: effectiveExpectedMicro,
+      expectedMicroVerdict:
+        isMicroAccurate && audit?.microVerdict ? audit.microVerdict : effectiveExpectedMicro,
       isMicroAccurate,
       studentPathology:
         audit?.detectedPathology ||
         (audit?.microVerdict === 'SESUAI_BUKTI' ? 'VALID_CLAIM' : ''),
       expectedPathology: effectiveExpectedPathology,
       expectedPathologyLabel: effectiveExpectedPathologyLabel,
-      studentEvidenceRefId: audit?.evidenceRefId || '',
+      studentEvidenceRefId: audit?.evidenceRefId || c.suggestedRefId || '1',
       expectedEvidenceRefId: c.suggestedRefId || '1',
       verificationReason: c.verificationReason,
     });
@@ -1511,10 +1874,12 @@ export function evaluateVerdictAndCalculateVScore(params: {
       : `Perlu Ditingkatkan (${stage1ClaimAudit}/25): Pastikan Anda memilih vonis mikro (Sesuai/Distorsi/Halusinasi) dan mendeteksi jenis Patologi AI pada seluruh ${totalClaims} unit klaim di kolom kiri.`;
 
   // --- TAHAP 2: Source Verification & Reference Matching (Maks 25 Poin) ---
+  // SPESIFIKASI 4b: Jika peserta telah memvalidasi minimal 3 sumber (inspectedReferenceIds.length >= 3),
+  // jamin skor Tahap 2 minimal 22-25 / 25 poin agar tidak kehilangan poin karena lupa dropdown!
   let refLinkedCount = 0;
   for (const c of extractedClaims) {
     const audit = microAudits[c.id];
-    if (audit?.evidenceRefId && audit.evidenceRefId !== '') {
+    if ((audit?.evidenceRefId && audit.evidenceRefId !== '') || audit?.microVerdict) {
       refLinkedCount++;
     }
   }
@@ -1525,7 +1890,15 @@ export function evaluateVerdictAndCalculateVScore(params: {
   } else {
     const linkPoints = (refLinkedCount / totalClaims) * 15;
     const inspectPoints = Math.min(10, inspectedReferenceIds.length * 3.5);
-    stage2SourceVerification = Math.round(Math.min(25, linkPoints + inspectPoints));
+    const computedStage2 = Math.round(Math.min(25, linkPoints + inspectPoints));
+    if (inspectedReferenceIds.length >= 3) {
+      stage2SourceVerification = Math.max(
+        refLinkedCount >= totalClaims ? 25 : 22,
+        computedStage2
+      );
+    } else {
+      stage2SourceVerification = computedStage2;
+    }
   }
 
   const stage2Feedback =
@@ -1546,31 +1919,26 @@ export function evaluateVerdictAndCalculateVScore(params: {
     'PARTIALLY SUPPORTED': 1,
     UNSUPPORTED: 2,
   };
-  const distance = Math.abs(orderMap[verdict] - orderMap[expectedVerdict]);
-  const stage3VerdictAccuracy = distance === 0 ? 25 : distance === 1 ? 10 : 0;
-  const isCalibrated = distance === 0;
 
-  const stage3Feedback =
-    distance === 0
-      ? `Tepat Sasaran (25/25): Vonis akhir Anda (${verdict}) 100% sesuai dengan kunci kalibrasi bukti primer.`
-      : distance === 1
-        ? `Meleset 1 Tingkat (10/25): Anda memilih ${verdict}, sedangkan kunci kalibrasi bukti seharusnya adalah ${expectedVerdict}.`
-        : `Salah Total (0/25): Anda memilih ${verdict}, bertolak belakang dengan kunci kalibrasi bukti (${expectedVerdict}).`;
+  const rawDistance = Math.abs(orderMap[verdict] - orderMap[effectiveExpectedVerdict]);
+  const isCriticallyCalibrated =
+    rawDistance === 0 ||
+    hasValidCriticalConsistency ||
+    (epistemicStance.hasCriticalOrDebunkingStance &&
+      (verdict === 'PARTIALLY SUPPORTED' || verdict === 'UNSUPPORTED'));
+
+  const stage3VerdictAccuracy = isCriticallyCalibrated ? 25 : rawDistance === 1 ? 15 : 0;
+  const isCalibrated = isCriticallyCalibrated;
+
+  const stage3Feedback = isCriticallyCalibrated
+    ? hasValidCriticalConsistency && verdict !== expectedVerdict
+      ? `Tepat & Konsisten secara Kritis (25/25): Vonis akhir Anda (${verdict}) selaras secara logis dengan temuan Vonis Mikro Tahap 1 serta didukung argumen analitis Tahap 4 yang valid.`
+      : `Tepat Sasaran (25/25): Vonis akhir Anda (${verdict}) 100% sesuai dengan evaluasi epistemik bukti primer.`
+    : rawDistance === 1
+      ? `Meleset 1 Tingkat (15/25): Anda memilih ${verdict}, sedangkan kunci kalibrasi bukti adalah ${effectiveExpectedVerdict}.`
+      : `Salah Total (0/25): Anda memilih ${verdict}, bertolak belakang dengan kunci kalibrasi bukti (${effectiveExpectedVerdict}).`;
 
   // --- TAHAP 4: Context & Analytical Justification (Maks 25 Poin) ---
-  const justificationCheck = validateAnalyticalJustification(justification, claimText, references);
-  let stage4JustificationQuality = justificationCheck.suggestedScoreOutOf25;
-  if (
-    typeof semanticJustificationScore === 'number' &&
-    !justificationCheck.isGibberish &&
-    justificationCheck.valid &&
-    stage4JustificationQuality > 0
-  ) {
-    stage4JustificationQuality = Math.round(
-      Math.min(25, Math.max(stage4JustificationQuality, semanticJustificationScore))
-    );
-  }
-
   const stage4Feedback =
     stage4JustificationQuality === 0
       ? justificationCheck.warningMessage ||
@@ -1591,26 +1959,48 @@ export function evaluateVerdictAndCalculateVScore(params: {
 
   const vScoreDelta = totalScore - currentVScore;
 
-  // Identifikasi kalimat yang mengalami distorsi
+  // Identifikasi kalimat yang mengalami distorsi atau sorotan kritis (tanpa mengambil kalimat boilerplate)
   const sentences = claimText
     .split(/(?<=[.!?])\s+/)
     .map((s) => s.trim())
-    .filter((s) => s.length > 20);
+    .filter((s) => s.length > 20 && !/proses audit informasi wajib menyandingkan/i.test(s));
   const distortedSentenceHighlight =
     sentences.find((s) =>
-      /100%|70 kali lipat|85 kali lipat|fiktif|zimmerman|haryanto|mutlak|tanpa terkecuali|seluruh/i.test(
+      /100%|70 kali lipat|85 kali lipat|fiktif|zimmerman|haryanto|mutlak|tanpa terkecuali|seluruh|studi kritis|ad-dakhil|isra['’]?iliyat|nabi sulaiman|borobudur|spekulatif/i.test(
         s
       )
     ) ||
-    sentences[sentences.length - 1] ||
+    sentences[0] ||
     claimText;
+
+  // SPESIFIKASI 5a: Bangun Kesimpulan Fakta Atas Tesis/Klaim Awal
+  const thesisConclusion: ThesisEpistemicConclusion =
+    effectiveExpectedVerdict === 'UNSUPPORTED' &&
+    !epistemicStance.hasCriticalOrDebunkingStance
+      ? {
+          topicLabel: epistemicStance.thesisConclusion.topicLabel,
+          statusCategory: 'TIDAK_TERBUKTI_MITOS',
+          statusLabel:
+            '❌ Tidak Terbukti / Mengandung Halusinasi (Bertentangan dengan Bukti Ilmiah Primer)',
+          epistemicSummary: `Klaim yang diuji memuat atribusi fiktif (Ghost Citation) atau generalisasi mutlak yang tidak didukung oleh ke-${references.length || 6} dokumen referensi primer di kolom kanan.`,
+        }
+      : effectiveExpectedVerdict === 'PARTIALLY SUPPORTED' &&
+          !epistemicStance.hasCriticalOrDebunkingStance
+        ? {
+            topicLabel: epistemicStance.thesisConclusion.topicLabel,
+            statusCategory: 'SPEKULATIF_DIPERDEBATKAN',
+            statusLabel:
+              '⚠️ Sebagian Didukung Bukti, Namun Mengandung Distorsi / Over-Generalisasi',
+            epistemicSummary: `Sebagian premis dasar memang merujuk pada literatur nyata, namun terdapat pelintiran statistik, kausalitas semu, atau klaim spekulatif yang melampaui kesimpulan studi primer.`,
+          }
+        : epistemicStance.thesisConclusion;
 
   const processLog: StudentAuditProcessLog = {
     stage1Claims: stage1ClaimsLog,
     stage2Sources: stage2SourcesLog,
     stage3Verdict: {
       chosenVerdict: verdict,
-      expectedVerdict,
+      expectedVerdict: isCriticallyCalibrated ? verdict : effectiveExpectedVerdict,
       isCalibrated,
     },
     stage4Justification: {
@@ -1626,7 +2016,7 @@ export function evaluateVerdictAndCalculateVScore(params: {
     id: `audit-${Date.now()}`,
     claimSummary: claimText.length > 140 ? `${claimText.slice(0, 140)}...` : claimText,
     verdict,
-    expectedVerdict,
+    expectedVerdict: isCriticallyCalibrated ? verdict : effectiveExpectedVerdict,
     isCalibrated,
     justification: justification.trim(),
     vScoreDelta,
@@ -1651,6 +2041,7 @@ export function evaluateVerdictAndCalculateVScore(params: {
       second: '2-digit',
     }),
     processLog,
+    thesisConclusion,
   };
 }
 
@@ -1674,8 +2065,10 @@ export function formatReferencesToAPA7(references: SearchReference[]): string[] 
 }
 
 /**
- * Verified Academic Rewriter: Menyusun ulang paragraf klaim AI menjadi Paragraf Akademik
- * Terkoreksi yang bebas halusinasi, bebas over-claim, dan siap dikutip untuk tugas/skripsi.
+ * SPESIFIKASI 5b: Verified Academic Rewriter:
+ * Menyusun ulang paragraf klaim AI menjadi Paragraf Akademik Terkoreksi yang bebas halusinasi,
+ * bebas kalimat abstrak mentah, dan secara kritis membedakan hipotesis spekulatif (Ad-Dakhil / Isra'iliyat)
+ * dari fakta historis/empiris primer.
  */
 export function generateVerifiedAcademicRewrite(
   claimText: string,
@@ -1686,22 +2079,40 @@ export function generateVerifiedAcademicRewrite(
   apaReferences: string[];
 } {
   const apaReferences = formatReferencesToAPA7(references);
+  const stance = detectEpistemicStanceForTopic(claimText, references);
+
   const s1 = references[0]
-    ? sanitizeSnippetText(references[0].snippet).replace(/[.!?]+$/, '')
+    ? cleanAcademicSnippet(references[0].snippet, references[0].title).replace(/[.!?]+$/, '')
     : 'Bukti literatur primer menunjukkan adanya korelasi terukur pada populasi sampel yang diteliti';
   const s2 = references[1]
-    ? sanitizeSnippetText(references[1].snippet).replace(/[.!?]+$/, '')
+    ? cleanAcademicSnippet(references[1].snippet, references[1].title).replace(/[.!?]+$/, '')
     : 'Evaluasi metodologis menekankan pentingnya mengendalikan variabel perancu sebelum menarik kesimpulan klinis';
   const s3 = references[2]
-    ? sanitizeSnippetText(references[2].snippet).replace(/[.!?]+$/, '')
-    : 'Data epidemiologi nasional merekomendasikan interpretasi yang proporsional sesuai karakteristik demografis responden';
+    ? cleanAcademicSnippet(references[2].snippet, references[2].title).replace(/[.!?]+$/, '')
+    : 'Data akademik nasional merekomendasikan interpretasi yang proporsional sesuai karakteristik bukti primer';
+
+  const lowerFirst = (str: string) =>
+    /^[A-Z]{2,}\b/.test(str) ? str : str.charAt(0).toLowerCase() + str.slice(1);
+
+  if (stance.hasCriticalOrDebunkingStance) {
+    const topicLabel = stance.thesisConclusion.topicLabel;
+    const critRefTag =
+      stance.criticalRefIds.length > 0
+        ? stance.criticalRefIds.map((id) => `[${id}]`).join('')
+        : '[1][4]';
+    const correctedParagraph = `Berdasarkan penelusuran literatur akademik terhadap topik "${topicLabel}", klaim mengenai ${lowerFirst(topicLabel)} dikategorikan sebagai hipotesis spekulatif yang mendapat sorotan kritis dalam kajian tafsir dan historiografi (Ad-Dakhil / Isra'iliyat) ${critRefTag}. Secara historis dan arkeologis, literatur mencatat bahwa ${lowerFirst(s1)} [1], serta ${lowerFirst(s2)} [2]. Lebih lanjut, telaah metodologis pada rujukan ketiga menegaskan bahwa ${lowerFirst(s3)} [3], sehingga klaim spekulatif tersebut tidak dapat dijadikan kesimpulan ilmiah primer tanpa verifikasi bukti empiris yang tervalidasi [1][2][3].`;
+    return {
+      correctedParagraph: sanitizeSynthesisParagraphs(correctedParagraph),
+      apaReferences,
+    };
+  }
 
   const prefixNote =
     expectedVerdict === 'VERIFIED'
       ? 'Berdasarkan verifikasi silang terhadap literatur primer yang terindeks, sintesis bukti empiris menunjukkan konsistensi temuan sebagai berikut:'
       : 'Berdasarkan hasil audit verifikasi bukti primer (setelah mengeliminasi distorsi statistik, kausalitas semu, dan generalisasi berlebih), formulasi akademik yang tervalidasi adalah sebagai berikut:';
 
-  const correctedParagraph = `${prefixNote} ${s1} [1]. Temuan tersebut diperkuat oleh telaah sekunder yang mengonfirmasi bahwa ${s2.charAt(0).toLowerCase() + s2.slice(1)} [2]. Lebih lanjut, dalam konteks kebijakan berbasis bukti di Indonesia, ${s3.charAt(0).toLowerCase() + s3.slice(1)} [3]. Oleh karena itu, penerapan kesimpulan riset ini wajib memperhatikan batasan populasi sampel serta metodologi pada dokumen sumber asli [1][2][3].`;
+  const correctedParagraph = `${prefixNote} ${s1} [1]. Temuan tersebut diperkuat oleh telaah sekunder yang mengonfirmasi bahwa ${lowerFirst(s2)} [2]. Lebih lanjut, dalam konteks kebijakan berbasis bukti di Indonesia, ${lowerFirst(s3)} [3]. Oleh karena itu, penerapan kesimpulan riset ini wajib memperhatikan batasan populasi sampel serta metodologi pada dokumen sumber asli [1][2][3].`;
 
   return {
     correctedParagraph: sanitizeSynthesisParagraphs(correctedParagraph),
