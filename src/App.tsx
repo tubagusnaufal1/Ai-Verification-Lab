@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Navbar, NavTabId } from './components/Navbar';
 import { BerandaView } from './components/BerandaView';
 import { TanyaAIView } from './components/TanyaAIView';
@@ -23,6 +23,7 @@ import {
   sanitizeSnippetText,
 } from './utils/verificationLogic';
 import {
+  STORAGE_KEYS,
   UserRole,
   StudentIdentity,
   StudentScoreEntry,
@@ -30,6 +31,7 @@ import {
   loadScenarios,
   saveScenarios,
   loadStudentScores,
+  saveStudentScores,
   upsertStudentScoreEntry,
   clearAllStudentScores,
   resetStudentScoresToDefault,
@@ -40,8 +42,16 @@ import {
   clearAuthSession,
   isMentorRole,
 } from './utils/storageService';
+import {
+  DEFAULT_ROOM_CODE,
+  fetchRoomState,
+  pushSubmissionToRoom,
+  pushScenarioToRoom,
+  pushReportToRoom,
+  resetRoomStateOnServer,
+} from './utils/syncService';
 import { generateStandaloneSingleFileHtml } from './utils/standaloneHtmlBuilder';
-import { Search, ShieldCheck, ArrowRight } from 'lucide-react';
+import { Search, ShieldCheck, ArrowRight, RotateCcw } from 'lucide-react';
 
 export default function App() {
   // Initial Role-Based Authentication Session
@@ -71,6 +81,97 @@ export default function App() {
   const [crowdsourcedReports, setCrowdsourcedReports] = useState<CrowdsourcedReport[]>(() =>
     loadCrowdsourcedReports()
   );
+  const [isSyncingRoom, setIsSyncingRoom] = useState<boolean>(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string>('');
+
+  const handleNotify = useCallback(
+    (
+      title: string,
+      message: string,
+      type: 'success' | 'info' | 'warning' = 'info'
+    ) => {
+      const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      setToasts((prev) => [...prev, { id, title, message, type }]);
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      }, 4500);
+    },
+    []
+  );
+
+  const applyServerRoomPayload = useCallback(
+    (payload: Awaited<ReturnType<typeof fetchRoomState>>) => {
+      if (!payload) return;
+      if (Array.isArray(payload.submissions)) {
+        setStudentScores(payload.submissions);
+        saveStudentScores(payload.submissions);
+      }
+      if (Array.isArray(payload.customScenarios) && payload.customScenarios.length > 0) {
+        setScenarios(payload.customScenarios);
+        saveScenarios(payload.customScenarios);
+      }
+      if (Array.isArray(payload.communityReports)) {
+        setCrowdsourcedReports(payload.communityReports);
+        saveCrowdsourcedReports(payload.communityReports);
+      }
+      setLastSyncedAt(
+        new Date().toLocaleTimeString('id-ID', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        })
+      );
+    },
+    []
+  );
+
+  const syncFromCloudRoom = useCallback(
+    async (showToast = false) => {
+      if (showToast) setIsSyncingRoom(true);
+      try {
+        const roomData = await fetchRoomState(DEFAULT_ROOM_CODE);
+        if (roomData) {
+          applyServerRoomPayload(roomData);
+          if (showToast) {
+            handleNotify(
+              'Sinkronisasi Lintas Perangkat Berhasil',
+              `Data Room ${DEFAULT_ROOM_CODE} (${roomData.submissions.length} nilai peserta, ${roomData.customScenarios.length} soal, ${roomData.communityReports.length} laporan) telah diperbarui.`,
+              'success'
+            );
+          }
+        }
+      } finally {
+        if (showToast) setIsSyncingRoom(false);
+      }
+    },
+    [applyServerRoomPayload, handleNotify]
+  );
+
+  // SPESIFIKASI 1b: Auto-Polling Sinkronisasi Lintas Perangkat setiap 3 detik + Cross-Tab Storage Event
+  useEffect(() => {
+    syncFromCloudRoom(false);
+    const interval = setInterval(() => {
+      syncFromCloudRoom(false);
+    }, 3000);
+
+    const handleStorageSync = (event: StorageEvent) => {
+      if (!event.key || event.key === STORAGE_KEYS.STUDENT_SCORES) {
+        setStudentScores(loadStudentScores());
+      }
+      if (!event.key || event.key === STORAGE_KEYS.SCENARIOS) {
+        setScenarios(loadScenarios());
+      }
+      if (!event.key || event.key === STORAGE_KEYS.CROWDSOURCED_REPORTS) {
+        setCrowdsourcedReports(loadCrowdsourcedReports());
+      }
+    };
+
+    window.addEventListener('storage', handleStorageSync);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('storage', handleStorageSync);
+    };
+  }, [syncFromCloudRoom]);
 
   // State for "Uji Output AI" 4-Stage VERIFY Pipeline
   const [auditClaimText, setAuditClaimText] = useState<string>(
@@ -89,18 +190,6 @@ export default function App() {
     CHALLENGE_SCENARIOS[0].calibrationHint
   );
   const [auditHistory, setAuditHistory] = useState<AuditResultRecord[]>([]);
-
-  const handleNotify = (
-    title: string,
-    message: string,
-    type: 'success' | 'info' | 'warning' = 'info'
-  ) => {
-    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    setToasts((prev) => [...prev, { id, title, message, type }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4500);
-  };
 
   const handleDismissToast = (id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -154,10 +243,11 @@ export default function App() {
       studentIdentity: identity,
     });
     setActiveTab('beranda');
+    syncFromCloudRoom(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
     handleNotify(
       'Sesi Peserta (Mahasiswa) Aktif',
-      `Selamat datang, ${identity.name} (${identity.nim}). Seluruh hasil audit dan sertifikat PDF akan tercatat atas nama Anda.`,
+      `Selamat datang, ${identity.name} (${identity.nim}). Seluruh hasil audit dan sertifikat PDF akan tercatat atas nama Anda dan tersinkron ke Room ${DEFAULT_ROOM_CODE}.`,
       'info'
     );
   };
@@ -171,10 +261,11 @@ export default function App() {
       studentIdentity,
     });
     setActiveTab('mentor-builder');
+    syncFromCloudRoom(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
     handleNotify(
       'Dashboard Penguji (Mentor) Aktif',
-      'Akses eksklusif ke 1. Pembuat Soal, 2. Rekap & Diagnostik Nilai Kelas, dan 3. Moderasi Laporan Kasus telah dibuka.',
+      `Akses eksklusif ke 1. Pembuat Soal, 2. Rekap & Diagnostik Nilai Kelas, dan 3. Moderasi Laporan Kasus telah dibuka (Room: ${DEFAULT_ROOM_CODE}).`,
       'success'
     );
   };
@@ -233,6 +324,9 @@ export default function App() {
       saveScenarios(updated);
       return updated;
     });
+    pushScenarioToRoom(importedScenario, DEFAULT_ROOM_CODE).then((payload) => {
+      if (payload) applyServerRoomPayload(payload);
+    });
     handleLoadChallengeScenario(importedScenario);
     handleNotify(
       'Kode Token Soal Berhasil Diimpor!',
@@ -269,22 +363,40 @@ export default function App() {
     };
 
     setStudentScores((prev) => upsertStudentScoreEntry(prev, newScoreEntry));
+    pushSubmissionToRoom(newScoreEntry, DEFAULT_ROOM_CODE).then((payload) => {
+      if (payload) applyServerRoomPayload(payload);
+    });
 
     handleNotify(
       record.isCalibrated
         ? `Audit Final Terkunci! Skor: ${record.newVScore}/100`
         : `Audit Final Terkunci (Skor: ${record.newVScore}/100)`,
-      `Hasil audit oleh ${studentIdentity.name} telah dikunci dan disimpan tanpa duplikasi baris.`,
+      `Hasil audit oleh ${studentIdentity.name} telah dikunci dan disinkronkan secara otomatis ke Dashboard Mentor (Room: ${DEFAULT_ROOM_CODE}).`,
       record.isCalibrated ? 'success' : 'info'
+    );
+  };
+
+  const handleImportStudentScoreEntry = (importedEntry: StudentScoreEntry) => {
+    setStudentScores((prev) => upsertStudentScoreEntry(prev, importedEntry));
+    pushSubmissionToRoom(importedEntry, DEFAULT_ROOM_CODE).then((payload) => {
+      if (payload) applyServerRoomPayload(payload);
+    });
+    handleNotify(
+      'Token Nilai Peserta Berhasil Diimpor!',
+      `Skor V-Score (${importedEntry.vScore}/100) beserta detail 4 tahap milik ${importedEntry.studentName} telah ditambahkan ke Rekap Nilai Kelas.`,
+      'success'
     );
   };
 
   const handleClearAllStudentScores = () => {
     const empty = clearAllStudentScores();
     setStudentScores(empty);
+    resetRoomStateOnServer('clear', DEFAULT_ROOM_CODE).then((payload) => {
+      if (payload) applyServerRoomPayload(payload);
+    });
     handleNotify(
       'Data Rekap Skor Dihapus',
-      'Seluruh baris pada tabel Rekap Nilai Mahasiswa telah dikosongkan.',
+      'Seluruh baris pada tabel Rekap Nilai Mahasiswa telah dikosongkan di semua perangkat.',
       'warning'
     );
   };
@@ -292,9 +404,12 @@ export default function App() {
   const handleResetStudentScoresToDefault = () => {
     const defaults = resetStudentScoresToDefault();
     setStudentScores(defaults);
+    resetRoomStateOnServer('default', DEFAULT_ROOM_CODE).then((payload) => {
+      if (payload) applyServerRoomPayload(payload);
+    });
     handleNotify(
       'Data Rekap Skor Direset ke Default',
-      'Tabel Rekap Nilai Mahasiswa telah dikembalikan ke 3 entri sampel awal.',
+      'Tabel Rekap Nilai Mahasiswa telah dikembalikan ke 3 entri sampel awal di semua perangkat.',
       'info'
     );
   };
@@ -305,9 +420,12 @@ export default function App() {
       saveScenarios(updated);
       return updated;
     });
+    pushScenarioToRoom(newScenario, DEFAULT_ROOM_CODE).then((payload) => {
+      if (payload) applyServerRoomPayload(payload);
+    });
     handleNotify(
-      'Soal Baru Diterbitkan!',
-      `"${newScenario.title}" kini aktif dan siap dibagikan ke mahasiswa menggunakan Kode Token Soal Base64.`,
+      'Soal Baru Diterbitkan & Disinkronkan!',
+      `"${newScenario.title}" kini langsung tayang di layar seluruh peserta (Room: ${DEFAULT_ROOM_CODE}).`,
       'success'
     );
   };
@@ -332,9 +450,12 @@ export default function App() {
       saveCrowdsourcedReports(updated);
       return updated;
     });
+    pushReportToRoom(newReport, DEFAULT_ROOM_CODE).then((payload) => {
+      if (payload) applyServerRoomPayload(payload);
+    });
     handleNotify(
       'Laporan Halusinasi AI Terkirim!',
-      'Terima kasih atas kontribusi Anda. Laporan kini masuk ke antrean Moderasi di Dashboard Mentor.',
+      `Laporan Anda langsung tersinkron ke antrean Moderasi di Dashboard Mentor (Room: ${DEFAULT_ROOM_CODE}).`,
       'success'
     );
   };
@@ -416,10 +537,13 @@ export default function App() {
       ],
     };
 
+    const promotedReport: CrowdsourcedReport = {
+      ...target,
+      status: 'PROMOTED',
+    };
+
     setCrowdsourcedReports((prev) => {
-      const updated = prev.map((r) =>
-        r.id === reportId ? { ...r, status: 'PROMOTED' as const } : r
-      );
+      const updated = prev.map((r) => (r.id === reportId ? promotedReport : r));
       saveCrowdsourcedReports(updated);
       return updated;
     });
@@ -430,9 +554,14 @@ export default function App() {
       return updated;
     });
 
+    pushReportToRoom(promotedReport, DEFAULT_ROOM_CODE);
+    pushScenarioToRoom(promotedScenario, DEFAULT_ROOM_CODE).then((payload) => {
+      if (payload) applyServerRoomPayload(payload);
+    });
+
     handleNotify(
       'Laporan Diangkat Menjadi Soal Ujian Kelas!',
-      `Laporan dari ${target.reporterName} kini telah tayang sebagai soal resmi.`,
+      `Laporan dari ${target.reporterName} kini telah tayang sebagai soal resmi di layar seluruh mahasiswa.`,
       'success'
     );
   };
@@ -488,7 +617,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#020617] text-slate-100 flex flex-col selection:bg-blue-600 selection:text-white">
+    <div className="min-h-screen overflow-x-hidden pb-20 md:pb-0 bg-[#020617] text-slate-100 flex flex-col selection:bg-blue-600 selection:text-white">
       <div className="no-print">
         <Navbar
           activeTab={activeTab}
@@ -502,6 +631,31 @@ export default function App() {
         />
       </div>
 
+      {/* SPESIFIKASI 1b: Live Cloud Sync Bar (Student Mode) */}
+      {!isMentor && (
+        <div className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-3 no-print">
+          <div className="bg-[#0b1120]/90 border border-slate-800/90 rounded-xl px-3.5 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div className="inline-flex items-center gap-2 text-emerald-300 font-bold">
+              <span>🟢 Live Cloud Sync Aktif (Room: {DEFAULT_ROOM_CODE})</span>
+              {lastSyncedAt && (
+                <span className="hidden sm:inline text-[11px] font-mono text-slate-400">
+                  · Diperbarui {lastSyncedAt}
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => syncFromCloudRoom(true)}
+              disabled={isSyncingRoom}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/35 border border-blue-500/40 text-blue-300 hover:text-white text-[11px] font-extrabold transition-all cursor-pointer disabled:opacity-60"
+            >
+              <RotateCcw className={`w-3 h-3 ${isSyncingRoom ? 'animate-spin' : ''}`} />
+              <span>🔄 Sinkronkan Sekarang</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       <main className="flex-1">
         {isMentor ? (
           /* DASHBOARD PENGUJI (MENTOR) EKSKLUSIF — 100% TERPISAH DARI HALAMAN PESERTA */
@@ -513,10 +667,14 @@ export default function App() {
             scenarios={scenarios}
             onAddScenario={handleAddScenarioFromMentor}
             studentScores={studentScores}
+            onImportStudentScoreEntry={handleImportStudentScoreEntry}
             onClearAllScores={handleClearAllStudentScores}
             onResetScoresToDefault={handleResetStudentScoresToDefault}
             crowdsourcedReports={crowdsourcedReports}
             onPromoteReportToScenario={handlePromoteReportToScenario}
+            onManualSyncNow={() => syncFromCloudRoom(true)}
+            isSyncing={isSyncingRoom}
+            lastSyncedAt={lastSyncedAt}
             onNotify={handleNotify}
           />
         ) : (
@@ -532,7 +690,7 @@ export default function App() {
             {(activeTab === 'tanya-ai' || activeTab === 'uji-output') && (
               <div className="space-y-2">
                 {/* Unified Sub-Workspace Switcher for Menu 2: Tanya AI & Lab Audit */}
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 no-print">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 no-print">
                   <div className="bg-[#0b1120] border border-[#1e293b] rounded-2xl p-2 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 shadow-lg">
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-1">
                       <button
@@ -544,7 +702,7 @@ export default function App() {
                             : 'bg-[#020617]/70 text-slate-400 hover:text-white hover:bg-slate-800/60'
                         }`}
                       >
-                        <Search className="w-4 h-4" />
+                        <Search className="w-4 h-4 shrink-0" />
                         <span>Tahap A: Tanya AI &amp; Sintesis 6 Bukti (Serper.dev)</span>
                       </button>
                       <button
@@ -556,9 +714,10 @@ export default function App() {
                             : 'bg-[#020617]/70 text-slate-400 hover:text-white hover:bg-slate-800/60'
                         }`}
                       >
-                        <ShieldCheck className="w-4 h-4" />
+                        <ShieldCheck className="w-4 h-4 shrink-0" />
                         <span>
-                          Tahap B: Meja Audit Side-by-Side, Rewriter &amp; Sertifikat PDF ({auditReferences.length} Bukti Terkunci)
+                          Tahap B: Meja Audit Side-by-Side, Rewriter &amp; Sertifikat PDF (
+                          {auditReferences.length} Bukti Terkunci)
                         </span>
                       </button>
                     </div>

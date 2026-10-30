@@ -19,12 +19,17 @@ import {
   downloadAuditReportAsPdf,
   analyzeReferenceCredibility,
   detectEpistemicStanceForTopic,
+  PreAuditIntuitionType,
+  tokenizeForensicHighlights,
 } from '../utils/verificationLogic';
 import {
   performCleanLiveSearch,
   gradeAnalyticalJustificationWithAI,
 } from '../utils/liveSearchService';
-import { StudentIdentity } from '../utils/storageService';
+import {
+  StudentIdentity,
+  encodeSubmissionScoreToken,
+} from '../utils/storageService';
 import {
   CheckCircle2,
   AlertTriangle,
@@ -101,6 +106,53 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
   const [copiedRewrite, setCopiedRewrite] = useState<boolean>(false);
   const [showCertificateModal, setShowCertificateModal] = useState<boolean>(false);
   const [activeSubView, setActiveSubView] = useState<'meja-audit' | 'riwayat-saya'>('meja-audit');
+  // SPESIFIKASI 3: State Tes Ilusi Kefasihan AI (Pre-Audit Intuition) — default 'CONVINCING'
+  const [preAuditIntuition, setPreAuditIntuition] = useState<PreAuditIntuitionType>('CONVINCING');
+  // SPESIFIKASI 4: State Tombol Sorot Kata Kritis & Sinyal Epistemik (Forensic Highlighter)
+  const [isForensicHighlightActive, setIsForensicHighlightActive] = useState<boolean>(false);
+  // SPESIFIKASI 2C: Quick-Switch Bar untuk layar HP / Tablet (< 1024px)
+  const [mobileAuditSection, setMobileAuditSection] = useState<'CLAIMS' | 'EVIDENCE' | 'VERDICT'>(
+    'CLAIMS'
+  );
+  const [copiedScoreToken, setCopiedScoreToken] = useState<boolean>(false);
+
+  const renderForensicText = (text: string, mode: 'CLAIM' | 'EVIDENCE') => {
+    if (!isForensicHighlightActive) {
+      return text;
+    }
+    const segments = tokenizeForensicHighlights(text, mode);
+    return segments.map((seg, idx) => {
+      if (
+        seg.highlightType === 'EXTREME_CLAIM' ||
+        seg.highlightType === 'QUANTITATIVE_YEAR'
+      ) {
+        return (
+          <mark
+            key={idx}
+            className="bg-amber-500/25 text-amber-200 border border-amber-400/50 px-1 py-0.5 rounded font-semibold"
+            title="Kata Kritis / Klaim Mutlak / Angka Statistik"
+          >
+            {seg.text}
+          </mark>
+        );
+      }
+      if (
+        seg.highlightType === 'CRITICAL_STANCE' ||
+        seg.highlightType === 'METHODOLOGY_SIGNAL'
+      ) {
+        return (
+          <mark
+            key={idx}
+            className="bg-emerald-500/25 text-emerald-200 border border-emerald-400/50 px-1 py-0.5 rounded font-semibold"
+            title="Sinyal Epistemik / Literatur Evaluatif"
+          >
+            {seg.text}
+          </mark>
+        );
+      }
+      return <React.Fragment key={idx}>{seg.text}</React.Fragment>;
+    });
+  };
 
   // Re-extract claims and Ghost Citations whenever claimText, references, or expectedVerdict change
   // PENTING (Spesifikasi 1a & 1b): Jangan membocorkan suggestedRefId atau pathologyId di awal sebelum dikunci!
@@ -126,6 +178,7 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
     setIsAuditLocked(false);
     setSelectedVerdict(null);
     setLatestEvaluation(null);
+    setPreAuditIntuition('CONVINCING');
     const localClaims = extractClaimsFromText(claimText, references, expectedVerdict);
     const freshMicro: Record<string, ClaimMicroAuditInput> = {};
     for (const c of localClaims) {
@@ -150,6 +203,7 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
     setSelectedVerdict(null);
     setJustification('');
     setLatestEvaluation(null);
+    setPreAuditIntuition('CONVINCING');
     const localClaims = extractClaimsFromText(claimText, references, expectedVerdict);
     const resetMicro: Record<string, ClaimMicroAuditInput> = {};
     for (const c of localClaims) {
@@ -405,6 +459,8 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
         microAudits,
         inspectedReferenceIds,
         semanticJustificationScore: semanticGrade.scoreOutOf25,
+        preAuditIntuition,
+        thesisQuery: activeScenarioTitle,
       });
 
       const rewrite = generateVerifiedAcademicRewrite(claimText, references, expectedVerdict);
@@ -449,6 +505,34 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
       `File PDF A4 resmi untuk ${studentIdentity.name} (V-Score ${latestEvaluation.newVScore}/100) berhasil diunduh ke perangkat Anda.`,
       'success'
     );
+  };
+
+  const handleCopyScoreTokenForMentor = () => {
+    if (!latestEvaluation) return;
+    const token = encodeSubmissionScoreToken({
+      id: latestEvaluation.id,
+      studentName: studentIdentity.name,
+      studentNim: studentIdentity.nim,
+      scenarioTitle: activeScenarioTitle || 'Audit Mandiri Output AI',
+      chosenVerdict: latestEvaluation.verdict,
+      expectedVerdict: latestEvaluation.expectedVerdict,
+      isCalibrated: latestEvaluation.isCalibrated,
+      justification: latestEvaluation.justification,
+      vScore: latestEvaluation.newVScore,
+      vScoreDelta: latestEvaluation.vScoreDelta,
+      stageBreakdown: latestEvaluation.stageBreakdown,
+      attemptCount: 1,
+      processLog: latestEvaluation.processLog,
+      timestamp: latestEvaluation.timestamp,
+    });
+    navigator.clipboard.writeText(token);
+    setCopiedScoreToken(true);
+    onNotify(
+      'Token Nilai Peserta Disalin!',
+      'Kode Token Nilai (AILAB-SCORE-v1:...) berhasil disalin. Anda dapat mengirimkannya ke Mentor sebagai cadangan lintas perangkat.',
+      'success'
+    );
+    setTimeout(() => setCopiedScoreToken(false), 3000);
   };
 
   const completedMicroVerdictCount = extractedClaims.filter(
@@ -734,7 +818,31 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
       {/* MEJA AUDIT UTAMA: TATA LETAK SIDE-BY-SIDE (KOLOM KIRI KLAIM vs KOLOM KANAN 6 BUKTI) */}
       {activeSubView === 'meja-audit' && (
         <div className="space-y-6 no-print">
-          {/* Box 1 (Full-Width): Paragraf Klaim yang Diuji */}
+          {/* SPESIFIKASI 2: BANNER "TESIS / KLAIM UTAMA YANG DIUJI" SECARA EKSPLISIT DI BAGIAN ATAS MEJA AUDIT */}
+          <div className="bg-gradient-to-r from-blue-950/60 via-[#0b1120] to-emerald-950/40 border-2 border-blue-500/40 rounded-2xl p-4 sm:p-5 shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="space-y-1">
+              <div className="text-[11px] font-extrabold uppercase tracking-widest text-blue-400">
+                Fokus Pengujian Epistemik · Verification-First AI Literacy
+              </div>
+              <div className="text-sm sm:text-base font-extrabold text-white leading-snug">
+                🎯 Tesis / Pertanyaan Awal yang Sedang Diaudit:{' '}
+                <span className="text-amber-300">
+                  &ldquo;
+                  {activeScenarioTitle
+                    ? activeScenarioTitle.replace(/^Search:\s*/i, '')
+                    : extractTopicQueryFromFreeText(claimText)}
+                  &rdquo;
+                </span>
+              </div>
+            </div>
+            <div className="text-xs text-slate-300 bg-[#020617]/80 border border-slate-800 rounded-xl px-3.5 py-2 shrink-0">
+              Uji apakah tesis di atas <strong className="text-emerald-400">Terbukti Ilmiah</strong>
+              , <strong className="text-amber-300">Spekulatif / Dikritisi (Ad-Dakhil)</strong>, atau{' '}
+              <strong className="text-red-400">Tidak Terbukti</strong>.
+            </div>
+          </div>
+
+          {/* Box 1 (Full-Width): Paragraf Klaim yang Diuji + Tes Ilusi Kefasihan AI */}
           <div className="bg-[#0b1120] border border-[#1e293b] rounded-2xl p-5 sm:p-6 shadow-xl space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <label
@@ -744,12 +852,24 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
                 Teks Output AI yang Sedang Diaudit{' '}
                 {isAuditLocked ? '(Terkunci — Sesi Audit Selesai)' : '(Dapat Diedit / Ditempel Langsung)'}
               </label>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {/* SPESIFIKASI 4: Tombol Sorot Kata Kritis & Sinyal Epistemik (Forensic Highlighter) */}
+                <button
+                  type="button"
+                  onClick={() => setIsForensicHighlightActive((prev) => !prev)}
+                  className={`inline-flex items-center gap-1.5 text-xs font-extrabold px-3 py-1.5 rounded-lg border transition-all cursor-pointer ${
+                    isForensicHighlightActive
+                      ? 'bg-amber-500 text-slate-950 border-amber-300 shadow-sm'
+                      : 'bg-[#0f172a] hover:bg-slate-800 text-amber-300 border-amber-500/40'
+                  }`}
+                >
+                  🔦 Sorot Kata Kritis &amp; Sinyal Epistemik
+                </button>
                 <button
                   type="button"
                   disabled={isExtractingByoText || isAuditLocked}
                   onClick={handleExtractAndFetchByoEvidence}
-                  className="text-xs font-bold text-emerald-400 hover:text-emerald-300 disabled:opacity-50 bg-emerald-950/40 border border-emerald-500/30 px-3 py-1 rounded-lg transition-colors cursor-pointer"
+                  className="text-xs font-bold text-emerald-400 hover:text-emerald-300 disabled:opacity-50 bg-emerald-950/40 border border-emerald-500/30 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
                 >
                   {isExtractingByoText
                     ? 'Menarik Bukti Serper...'
@@ -758,7 +878,7 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
                 <button
                   type="button"
                   onClick={handleResetNewAuditSession}
-                  className="inline-flex items-center gap-1 text-xs font-bold text-amber-300 hover:text-white bg-amber-950/40 border border-amber-500/30 px-3 py-1 rounded-lg cursor-pointer"
+                  className="inline-flex items-center gap-1 text-xs font-bold text-amber-300 hover:text-white bg-amber-950/40 border border-amber-500/30 px-3 py-1.5 rounded-lg cursor-pointer"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                   🔄 Mulai Sesi Audit Baru / Reset
@@ -783,13 +903,135 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
                   : 'border-slate-700 focus:border-blue-500'
               }`}
             />
+
+            {/* SPESIFIKASI 3: TES ILUSI KEFASIHAN AI (PRE-AUDIT INTUITION) */}
+            <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              <div className="text-xs text-slate-200 font-bold leading-relaxed">
+                🧠 Cek Intuisi Awal (Sebelum Membedah Bukti):{' '}
+                <span className="text-slate-300 font-normal">
+                  Sekilas, seberapa meyakinkan teks output AI di atas?
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={isAuditLocked}
+                  onClick={() => setPreAuditIntuition('CONVINCING')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-extrabold border transition-all ${
+                    isAuditLocked ? 'cursor-not-allowed opacity-75' : 'cursor-pointer'
+                  } ${
+                    preAuditIntuition === 'CONVINCING'
+                      ? 'bg-blue-600 text-white border-blue-400'
+                      : 'bg-[#020617] text-slate-300 border-slate-700 hover:border-blue-500/50'
+                  }`}
+                >
+                  1. Terlihat Meyakinkan &amp; Akurat
+                </button>
+                <button
+                  type="button"
+                  disabled={isAuditLocked}
+                  onClick={() => setPreAuditIntuition('DOUBTFUL')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-extrabold border transition-all ${
+                    isAuditLocked ? 'cursor-not-allowed opacity-75' : 'cursor-pointer'
+                  } ${
+                    preAuditIntuition === 'DOUBTFUL'
+                      ? 'bg-amber-500 text-slate-950 border-amber-300'
+                      : 'bg-[#020617] text-slate-300 border-slate-700 hover:border-amber-500/50'
+                  }`}
+                >
+                  2. Agak Meragukan
+                </button>
+                <button
+                  type="button"
+                  disabled={isAuditLocked}
+                  onClick={() => setPreAuditIntuition('FABRICATED')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-extrabold border transition-all ${
+                    isAuditLocked ? 'cursor-not-allowed opacity-75' : 'cursor-pointer'
+                  } ${
+                    preAuditIntuition === 'FABRICATED'
+                      ? 'bg-red-600 text-white border-red-400'
+                      : 'bg-[#020617] text-slate-300 border-slate-700 hover:border-red-500/50'
+                  }`}
+                >
+                  3. Terlihat Mengada-ada
+                </button>
+              </div>
+            </div>
+
+            {isForensicHighlightActive && (
+              <div className="bg-amber-950/30 border border-amber-500/40 rounded-xl px-4 py-2.5 text-xs text-slate-200 flex flex-wrap items-center justify-between gap-2">
+                <span>
+                  🔦 <strong>Mode Forensic Highlighter Aktif:</strong> Memindai kata klaim mutlak di
+                  kolom kiri vs sinyal literatur kritis di kolom kanan.
+                </span>
+                <div className="flex flex-wrap items-center gap-3 text-[11px]">
+                  <span className="inline-flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded bg-amber-400 inline-block" /> Kata Klaim
+                    Ekstrem / Angka
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded bg-emerald-400 inline-block" /> Sinyal
+                    Epistemik / Kritis (Ad-Dakhil, Korelasi, Sampel)
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* SPESIFIKASI 2C: STICKY QUICK-SWITCH BAR UNTUK LAYAR HP / TABLET (< 1024px) */}
+          <div className="lg:hidden sticky top-14 sm:top-16 z-30 bg-[#0b1120]/95 backdrop-blur-md border border-blue-500/40 rounded-xl p-1.5 shadow-lg">
+            <div className="grid grid-cols-3 gap-1.5">
+              <button
+                type="button"
+                onClick={() => setMobileAuditSection('CLAIMS')}
+                className={`py-2 px-2 rounded-lg text-[11px] sm:text-xs font-extrabold transition-all cursor-pointer truncate ${
+                  mobileAuditSection === 'CLAIMS'
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'bg-[#020617] text-slate-300 hover:text-white'
+                }`}
+              >
+                📝 Daftar Klaim ({extractedClaims.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobileAuditSection('EVIDENCE')}
+                className={`py-2 px-2 rounded-lg text-[11px] sm:text-xs font-extrabold transition-all cursor-pointer truncate ${
+                  mobileAuditSection === 'EVIDENCE'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'bg-[#020617] text-slate-300 hover:text-white'
+                }`}
+              >
+                📚 Kartu Bukti ({references.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileAuditSection('VERDICT');
+                  const el = document.getElementById('verdict-final-panel');
+                  if (el) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }
+                }}
+                className={`py-2 px-2 rounded-lg text-[11px] sm:text-xs font-extrabold transition-all cursor-pointer truncate ${
+                  mobileAuditSection === 'VERDICT'
+                    ? 'bg-amber-500 text-slate-950 shadow-sm'
+                    : 'bg-[#020617] text-slate-300 hover:text-white'
+                }`}
+              >
+                ⚖️ Putusan Verdict
+              </button>
+            </div>
           </div>
 
           {/* GRID SIDE-BY-SIDE SEJAJAR: TAHAP 1 (KIRI - 7 KOLOM) vs TAHAP 2 (KANAN - 5 KOLOM) */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             {/* KOLOM KIRI (7 KOLOM): EKSTRAKSI KLAIM, GHOST CITATION, & AUDIT MIKRO */}
-            <div className="lg:col-span-7">
-              <div className="bg-[#0b1120] border border-[#1e293b] rounded-2xl p-5 sm:p-6 shadow-xl space-y-4">
+            <div
+              className={`lg:col-span-7 ${
+                mobileAuditSection === 'EVIDENCE' ? 'hidden lg:block' : 'block'
+              }`}
+            >
+              <div className="bg-[#0b1120] border border-[#1e293b] rounded-2xl p-4 sm:p-6 shadow-xl space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-800">
                   <div>
                     <h2 className="text-base sm:text-lg font-extrabold text-white">
@@ -893,7 +1135,7 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
 
                         {/* Claim Sentence (without [1], [2], [3] before lock) */}
                         <p className="text-sm sm:text-base text-slate-100 leading-relaxed font-medium font-editorial">
-                          &ldquo;{displayedClaimSentence}&rdquo;
+                          &ldquo;{renderForensicText(displayedClaimSentence, 'CLAIM')}&rdquo;
                         </p>
 
                         {/* GHOST CITATION DETECTOR BADGE */}
@@ -1068,8 +1310,12 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
             </div>
 
             {/* KOLOM KANAN (5 KOLOM): 5-6 KARTU BUKTI MANDIRI SIDE-BY-SIDE SEJAJAR */}
-            <div className="lg:col-span-5 space-y-4">
-              <div className="bg-[#0b1120] border border-[#1e293b] rounded-2xl p-5 shadow-xl space-y-4">
+            <div
+              className={`lg:col-span-5 space-y-4 ${
+                mobileAuditSection === 'EVIDENCE' ? 'block' : 'hidden lg:block'
+              }`}
+            >
+              <div className="bg-[#0b1120] border border-[#1e293b] rounded-2xl p-4 sm:p-5 shadow-xl space-y-4">
                 <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-800">
                   <div>
                     <h2 className="text-base font-extrabold text-white flex items-center gap-2">
@@ -1144,7 +1390,7 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
                         </div>
 
                         <div className="bg-[#020617]/90 border border-slate-800/90 rounded-lg p-3 text-xs sm:text-sm text-slate-200 leading-relaxed font-editorial">
-                          &ldquo;{ref.snippet}&rdquo;
+                          &ldquo;{renderForensicText(ref.snippet, 'EVIDENCE')}&rdquo;
                         </div>
 
                         {/* Dual Action Buttons */}
@@ -1191,7 +1437,10 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
 
       {/* TAHAP 3 & 4: FILTER RELEVANSI ARGUMEN, CHECKLIST REAL-TIME 25/25, PANDUAN KONSISTENSI VERDICT & PENGUNCIAN JAWABAN */}
       {activeSubView === 'meja-audit' && (
-        <div className="bg-[#0b1120] border-2 border-blue-500/40 rounded-2xl p-6 sm:p-8 shadow-xl space-y-6 no-print">
+        <div
+          id="verdict-final-panel"
+          className="bg-[#0b1120] border-2 border-blue-500/40 rounded-2xl p-5 sm:p-8 shadow-xl space-y-6 no-print"
+        >
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-slate-800">
             <div>
               <span className="text-xs font-extrabold uppercase tracking-widest text-blue-400">
@@ -1580,6 +1829,49 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
                 </div>
               )}
 
+              {/* SPESIFIKASI 3: EVALUASI DAMPAK KOGNITIF (PRE-AUDIT VS POST-AUDIT SHIFT) */}
+              {latestEvaluation.cognitiveShift && (
+                <div className="bg-[#0b1120] border border-blue-500/40 rounded-xl p-4 sm:p-5 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-blue-400">
+                      💡 Evaluasi Dampak Kognitif (Pre-Audit vs Post-Audit Shift)
+                    </div>
+                    <span
+                      className={`text-xs font-extrabold px-3 py-1 rounded-lg border ${
+                        latestEvaluation.cognitiveShift.shiftCategory ===
+                          'FLUENCY_ILLUSION_BROKEN' ||
+                        latestEvaluation.cognitiveShift.shiftCategory ===
+                          'CRITICAL_SKEPTICISM_VALIDATED'
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                          : 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                      }`}
+                    >
+                      {latestEvaluation.cognitiveShift.headline}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 text-xs">
+                    <div className="bg-[#0f172a] border border-slate-800 rounded-lg p-2.5">
+                      <span className="text-slate-400 block">Intuisi Awal (Pre-Audit):</span>
+                      <strong className="text-white">
+                        {latestEvaluation.cognitiveShift.preAuditLabel}
+                      </strong>
+                    </div>
+                    <div className="bg-[#0f172a] border border-slate-800 rounded-lg p-2.5">
+                      <span className="text-slate-400 block">
+                        Temuan Bukti Primer (Post-Audit):
+                      </span>
+                      <strong className="text-emerald-400">
+                        {latestEvaluation.cognitiveShift.postAuditVerdict} (Kunci:{' '}
+                        {latestEvaluation.cognitiveShift.expectedVerdict})
+                      </strong>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    {latestEvaluation.cognitiveShift.analysisText}
+                  </p>
+                </div>
+              )}
+
               {/* Top Result Summary & PDF Button */}
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-5 border-b border-slate-800">
                 <div className="space-y-1.5">
@@ -1610,14 +1902,34 @@ export const UjiOutputView: React.FC<UjiOutputViewProps> = ({
                   </p>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleDirectDownloadPdf}
-                  className="shrink-0 inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-[#2563eb] hover:bg-[#3b82f6] text-white text-xs sm:text-sm font-extrabold transition-all cursor-pointer"
-                >
-                  <Download className="w-4 h-4" />
-                  Unduh Sertifikat &amp; Rapor Audit (PDF A4)
-                </button>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleCopyScoreTokenForMentor}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 hover:text-white text-xs sm:text-sm font-extrabold transition-all cursor-pointer"
+                  >
+                    {copiedScoreToken ? (
+                      <>
+                        <Check className="w-4 h-4 text-emerald-400" />
+                        <span>Token Nilai Tersalin!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-4 h-4" />
+                        <span>📲 Salin Token Nilai untuk Mentor</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleDirectDownloadPdf}
+                    className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-[#2563eb] hover:bg-[#3b82f6] text-white text-xs sm:text-sm font-extrabold transition-all cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Unduh Sertifikat &amp; Rapor Audit (PDF A4)</span>
+                  </button>
+                </div>
               </div>
 
               {/* Rincian Perolehan Poin Tahap 1, 2, 3, dan 4 */}

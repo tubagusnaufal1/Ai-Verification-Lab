@@ -53,7 +53,7 @@ export interface CrowdsourcedReport {
   createdAt: string;
 }
 
-const KEYS = {
+export const STORAGE_KEYS = {
   SCENARIOS: 'ailab_scenarios_v3',
   STUDENT_SCORES: 'ailab_student_scores_v5',
   CROWDSOURCED_REPORTS: 'ailab_crowdsourced_reports_v3',
@@ -61,6 +61,8 @@ const KEYS = {
   STUDENT_IDENTITY: 'ailab_student_identity_v3',
   AUTH_SESSION: 'ailab_auth_session_v4',
 };
+
+const KEYS = STORAGE_KEYS;
 
 export const INITIAL_STUDENT_SCORES: StudentScoreEntry[] = [
   {
@@ -323,7 +325,7 @@ export const INITIAL_STUDENT_SCORES: StudentScoreEntry[] = [
   },
 ];
 
-const INITIAL_CROWDSOURCED_REPORTS: CrowdsourcedReport[] = [
+export const INITIAL_CROWDSOURCED_REPORTS: CrowdsourcedReport[] = [
   {
     id: 'report-seed-1',
     reporterName: 'Rizky Ramadhan',
@@ -354,6 +356,110 @@ const INITIAL_CROWDSOURCED_REPORTS: CrowdsourcedReport[] = [
   },
 ];
 
+export function normalizeStudentScoreEntry(raw: Partial<StudentScoreEntry> | null | undefined, idx = 0): StudentScoreEntry {
+  const sb = raw?.stageBreakdown;
+  const pl = raw?.processLog;
+  return {
+    id: raw?.id || `score-fallback-${idx}`,
+    studentName: raw?.studentName || 'Mahasiswa Peserta',
+    studentNim: raw?.studentNim || '-',
+    scenarioTitle: raw?.scenarioTitle || 'Audit Mandiri Output AI',
+    chosenVerdict: raw?.chosenVerdict || 'PARTIALLY SUPPORTED',
+    expectedVerdict: raw?.expectedVerdict || 'PARTIALLY SUPPORTED',
+    isCalibrated: Boolean(raw?.isCalibrated),
+    justification: raw?.justification || '-',
+    vScore: typeof raw?.vScore === 'number' ? raw.vScore : 80,
+    vScoreDelta: typeof raw?.vScoreDelta === 'number' ? raw.vScoreDelta : 0,
+    attemptCount: typeof raw?.attemptCount === 'number' ? raw.attemptCount : 1,
+    timestamp: raw?.timestamp || '-',
+    stageBreakdown: {
+      stage1ClaimAudit: sb?.stage1ClaimAudit ?? 22,
+      stage2SourceVerification: sb?.stage2SourceVerification ?? 21,
+      stage3VerdictAccuracy: sb?.stage3VerdictAccuracy ?? 25,
+      stage4JustificationQuality: sb?.stage4JustificationQuality ?? 20,
+      totalScore: sb?.totalScore ?? (typeof raw?.vScore === 'number' ? raw.vScore : 80),
+      stage1Feedback: sb?.stage1Feedback || 'Audit klaim selesai.',
+      stage2Feedback: sb?.stage2Feedback || 'Verifikasi sumber selesai.',
+      stage3Feedback: sb?.stage3Feedback || 'Evaluasi putusan selesai.',
+      stage4Feedback: sb?.stage4Feedback || 'Justifikasi tercatat.',
+    },
+    processLog: pl
+      ? {
+          stage1Claims: Array.isArray(pl?.stage1Claims) ? pl.stage1Claims : [],
+          stage2Sources: Array.isArray(pl?.stage2Sources) ? pl.stage2Sources : [],
+          stage3Verdict: {
+            chosenVerdict: pl?.stage3Verdict?.chosenVerdict || raw?.chosenVerdict || 'PARTIALLY SUPPORTED',
+            expectedVerdict: pl?.stage3Verdict?.expectedVerdict || raw?.expectedVerdict || 'PARTIALLY SUPPORTED',
+            isCalibrated: Boolean(pl?.stage3Verdict?.isCalibrated ?? raw?.isCalibrated),
+          },
+          stage4Justification: {
+            justificationText: pl?.stage4Justification?.justificationText || raw?.justification || '-',
+            meaningfulWordCount: pl?.stage4Justification?.meaningfulWordCount ?? 15,
+            topicKeywordsFound: Array.isArray(pl?.stage4Justification?.topicKeywordsFound)
+              ? pl.stage4Justification.topicKeywordsFound
+              : [],
+            analyticalKeywordsFound: Array.isArray(pl?.stage4Justification?.analyticalKeywordsFound)
+              ? pl.stage4Justification.analyticalKeywordsFound
+              : [],
+            checklist: {
+              min12WordsAndClean: Boolean(pl?.stage4Justification?.checklist?.min12WordsAndClean ?? true),
+              min12WordsPoints: pl?.stage4Justification?.checklist?.min12WordsPoints ?? 8,
+              min2TopicKeywords: Boolean(pl?.stage4Justification?.checklist?.min2TopicKeywords ?? true),
+              min2TopicPoints: pl?.stage4Justification?.checklist?.min2TopicPoints ?? 9,
+              hasAnalyticalTerm: Boolean(pl?.stage4Justification?.checklist?.hasAnalyticalTerm ?? true),
+              analyticalTermPoints: pl?.stage4Justification?.checklist?.analyticalTermPoints ?? 8,
+            },
+          },
+        }
+      : undefined,
+  };
+}
+
+export const SCORE_TOKEN_PREFIX = 'AILAB-SCORE-v1:';
+
+export function encodeSubmissionScoreToken(entry: StudentScoreEntry): string {
+  const normalized = normalizeStudentScoreEntry(entry, 0);
+  const json = JSON.stringify(normalized);
+  if (typeof Buffer !== 'undefined') {
+    return `${SCORE_TOKEN_PREFIX}${Buffer.from(json, 'utf-8').toString('base64')}`;
+  }
+  const bytes = new TextEncoder().encode(json);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return `${SCORE_TOKEN_PREFIX}${btoa(binary)}`;
+}
+
+export function decodeSubmissionScoreToken(token: string): StudentScoreEntry | null {
+  try {
+    const clean = (token || '').trim();
+    const base64Part = clean.startsWith(SCORE_TOKEN_PREFIX)
+      ? clean.slice(SCORE_TOKEN_PREFIX.length).trim()
+      : clean;
+    if (!base64Part) return null;
+
+    let json = '';
+    if (typeof Buffer !== 'undefined') {
+      json = Buffer.from(base64Part, 'base64').toString('utf-8');
+    } else {
+      const binary = atob(base64Part);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      json = new TextDecoder().decode(bytes);
+    }
+    const parsed = JSON.parse(json);
+    if (!parsed || typeof parsed !== 'object' || (!parsed.studentName && !parsed.vScore)) {
+      return null;
+    }
+    return normalizeStudentScoreEntry(parsed, 0);
+  } catch {
+    return null;
+  }
+}
+
 export function loadScenarios(): ChallengeScenario[] {
   try {
     const raw = localStorage.getItem(KEYS.SCENARIOS);
@@ -363,7 +469,17 @@ export function loadScenarios(): ChallengeScenario[] {
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
-      return parsed;
+      return parsed.map((s, idx) => ({
+        ...CHALLENGE_SCENARIOS[0],
+        ...s,
+        id: s?.id || `scen-${idx}`,
+        title: s?.title || 'Studi Kasus Verifikasi AI',
+        aiOutputText: s?.aiOutputText || CHALLENGE_SCENARIOS[0].aiOutputText,
+        expectedVerdict: s?.expectedVerdict || 'PARTIALLY SUPPORTED',
+        preloadedReferences: Array.isArray(s?.preloadedReferences)
+          ? s.preloadedReferences
+          : CHALLENGE_SCENARIOS[0].preloadedReferences,
+      }));
     }
   } catch {
     // ignore storage errors
@@ -388,7 +504,7 @@ export function loadStudentScores(): StudentScoreEntry[] {
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return parsed;
+      return parsed.map((item, idx) => normalizeStudentScoreEntry(item, idx));
     }
   } catch {
     // ignore
@@ -408,43 +524,47 @@ export function upsertStudentScoreEntry(
   prevScores: StudentScoreEntry[],
   newEntry: StudentScoreEntry
 ): StudentScoreEntry[] {
-  const cleanName = newEntry.studentName.trim().toLowerCase();
-  const cleanNim = newEntry.studentNim.trim().toLowerCase();
-  const baseScenarioTitle = newEntry.scenarioTitle
+  const safePrev = Array.isArray(prevScores)
+    ? prevScores.map((item, i) => normalizeStudentScoreEntry(item, i))
+    : [];
+  const normalizedNew = normalizeStudentScoreEntry(newEntry, 0);
+  const cleanName = (normalizedNew.studentName || '').trim().toLowerCase();
+  const cleanNim = (normalizedNew.studentNim || '').trim().toLowerCase();
+  const baseScenarioTitle = (normalizedNew.scenarioTitle || 'Audit Mandiri Output AI')
     .replace(/\s*\(Percobaan\s*#\d+\)\s*$/i, '')
     .trim();
 
-  const existingIndex = prevScores.findIndex((item) => {
-    const itemBaseTitle = item.scenarioTitle
+  const existingIndex = safePrev.findIndex((item) => {
+    const itemBaseTitle = (item?.scenarioTitle || '')
       .replace(/\s*\(Percobaan\s*#\d+\)\s*$/i, '')
       .trim()
       .toLowerCase();
     const sameStudent =
-      item.studentNim.trim().toLowerCase() === cleanNim ||
-      item.studentName.trim().toLowerCase() === cleanName;
+      (item?.studentNim || '').trim().toLowerCase() === cleanNim ||
+      (item?.studentName || '').trim().toLowerCase() === cleanName;
     return sameStudent && itemBaseTitle === baseScenarioTitle.toLowerCase();
   });
 
   if (existingIndex === -1) {
     const firstAttemptEntry: StudentScoreEntry = {
-      ...newEntry,
+      ...normalizedNew,
       attemptCount: 1,
       scenarioTitle: `${baseScenarioTitle} (Percobaan #1)`,
     };
-    const updated = [firstAttemptEntry, ...prevScores];
+    const updated = [firstAttemptEntry, ...safePrev];
     saveStudentScores(updated);
     return updated;
   }
 
-  const existing = prevScores[existingIndex];
-  const nextAttemptCount = (existing.attemptCount || 1) + 1;
+  const existing = safePrev[existingIndex];
+  const nextAttemptCount = (existing?.attemptCount || 1) + 1;
   const updatedEntry: StudentScoreEntry = {
-    ...newEntry,
+    ...normalizedNew,
     attemptCount: nextAttemptCount,
     scenarioTitle: `${baseScenarioTitle} (Percobaan #${nextAttemptCount})`,
   };
 
-  const remaining = prevScores.filter((_, idx) => idx !== existingIndex);
+  const remaining = safePrev.filter((_, idx) => idx !== existingIndex);
   const updated = [updatedEntry, ...remaining];
   saveStudentScores(updated);
   return updated;
@@ -469,7 +589,18 @@ export function loadCrowdsourcedReports(): CrowdsourcedReport[] {
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return parsed;
+      return parsed.map((rep, idx) => ({
+        id: rep?.id || `rep-fallback-${idx}`,
+        reporterName: rep?.reporterName || 'Mahasiswa Pelapor',
+        reporterNim: rep?.reporterNim || '-',
+        aiPlatform: rep?.aiPlatform || 'LLM Umum',
+        topicCategory: rep?.topicCategory || 'Sains & Teknologi',
+        hallucinationText: rep?.hallucinationText || '-',
+        correctionEvidence: rep?.correctionEvidence || '-',
+        suggestedVerdict: rep?.suggestedVerdict || 'UNSUPPORTED',
+        status: rep?.status === 'PROMOTED' ? 'PROMOTED' : 'PENDING',
+        createdAt: rep?.createdAt || '-',
+      }));
     }
   } catch {
     // ignore

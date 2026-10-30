@@ -12,6 +12,7 @@ import {
   CrowdsourcedReport,
   StudentIdentity,
   StudentScoreEntry,
+  encodeSubmissionScoreToken,
 } from '../utils/storageService';
 import {
   ShieldAlert,
@@ -27,6 +28,7 @@ import {
   BarChart3,
   History,
   FileText,
+  Copy,
 } from 'lucide-react';
 
 interface ChallengeLabViewProps {
@@ -609,13 +611,17 @@ export const ChallengeLabView: React.FC<ChallengeLabViewProps> = ({
           </div>
 
           {(() => {
-            const personalEntries = studentScores.filter(
+            const safeStudentNim = (studentIdentity?.nim || '').toLowerCase();
+            const safeStudentName = (studentIdentity?.name || '').toLowerCase();
+            const personalEntries = (studentScores || []).filter(
               (s) =>
-                s.studentNim.toLowerCase() === studentIdentity.nim.toLowerCase() ||
-                s.studentName.toLowerCase() === studentIdentity.name.toLowerCase()
+                (s?.studentNim || '').toLowerCase() === safeStudentNim ||
+                (s?.studentName || '').toLowerCase() === safeStudentName
             );
             const displayEntries =
-              personalEntries.length > 0 ? personalEntries.slice(0, 6) : studentScores.slice(0, 4);
+              personalEntries.length > 0
+                ? personalEntries.slice(0, 6)
+                : (studentScores || []).slice(0, 4);
 
             return (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -626,33 +632,37 @@ export const ChallengeLabView: React.FC<ChallengeLabViewProps> = ({
                     <span className="font-mono text-blue-400">{displayEntries.length} Sesi</span>
                   </div>
                   <div className="space-y-3">
-                    {displayEntries.map((entry, idx) => (
-                      <div key={entry.id || idx} className="space-y-1">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-slate-300 font-medium truncate max-w-[210px]">
-                            {entry.scenarioTitle}
-                          </span>
-                          <span
-                            className={`font-mono font-extrabold ${
-                              entry.isCalibrated ? 'text-emerald-400' : 'text-amber-400'
-                            }`}
-                          >
-                            {entry.vScore}/100 (
-                            {entry.vScoreDelta >= 0 ? `+${entry.vScoreDelta}` : entry.vScoreDelta})
-                          </span>
+                    {displayEntries.map((entry, idx) => {
+                      const entryScore = entry?.vScore ?? 80;
+                      const entryDelta = entry?.vScoreDelta ?? 0;
+                      return (
+                        <div key={entry?.id || idx} className="space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-slate-300 font-medium truncate max-w-[210px]">
+                              {entry?.scenarioTitle || 'Audit Mandiri Output AI'}
+                            </span>
+                            <span
+                              className={`font-mono font-extrabold ${
+                                entry?.isCalibrated ? 'text-emerald-400' : 'text-amber-400'
+                              }`}
+                            >
+                              {entryScore}/100 (
+                              {entryDelta >= 0 ? `+${entryDelta}` : entryDelta})
+                            </span>
+                          </div>
+                          <div className="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ${
+                                entry?.isCalibrated
+                                  ? 'bg-gradient-to-r from-blue-500 to-emerald-400'
+                                  : 'bg-gradient-to-r from-amber-500 to-orange-400'
+                              }`}
+                              style={{ width: `${Math.min(100, Math.max(12, entryScore))}%` }}
+                            />
+                          </div>
                         </div>
-                        <div className="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
-                          <div
-                            className={`h-full rounded-full transition-all duration-500 ${
-                              entry.isCalibrated
-                                ? 'bg-gradient-to-r from-blue-500 to-emerald-400'
-                                : 'bg-gradient-to-r from-amber-500 to-orange-400'
-                            }`}
-                            style={{ width: `${Math.min(100, Math.max(12, entry.vScore))}%` }}
-                          />
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -663,40 +673,57 @@ export const ChallengeLabView: React.FC<ChallengeLabViewProps> = ({
                     Riwayat Putusan &amp; Rapor PDF 4 Tahap ({displayEntries.length} Rekaman)
                   </div>
                   <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
-                    {displayEntries.map((item) => (
+                    {displayEntries.map((item, idx) => (
                       <div
-                        key={item.id}
+                        key={item?.id || idx}
                         className="bg-[#0f172a] border border-slate-800/90 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
                       >
                         <div className="space-y-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-xs font-bold text-white">
-                              {item.scenarioTitle}
+                              {item?.scenarioTitle || 'Audit Mandiri Output AI'}
                             </span>
                             <span
                               className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded border ${
-                                item.isCalibrated
+                                item?.isCalibrated
                                   ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
                                   : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
                               }`}
                             >
-                              Vonis: {item.chosenVerdict}
+                              Vonis: {item?.chosenVerdict || 'PARTIALLY SUPPORTED'}
                             </span>
                           </div>
                           <p className="text-xs text-slate-400 line-clamp-1 font-editorial">
-                            &ldquo;{item.justification}&rdquo;
+                            &ldquo;{item?.justification || '-'}&rdquo;
                           </p>
                         </div>
-                        <div className="flex items-center gap-3 shrink-0">
-                          <div className="text-right">
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                          <div className="text-right mr-1">
                             <div className="text-sm font-extrabold font-mono text-white">
-                              {item.vScore}
+                              {item?.vScore ?? 80}
                               <span className="text-xs text-slate-500">/100</span>
                             </div>
                             <div className="text-[10px] text-slate-500 font-mono">
-                              {item.timestamp}
+                              {item?.timestamp || 'Baru saja'}
                             </div>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const token = encodeSubmissionScoreToken(item);
+                              navigator.clipboard.writeText(token);
+                              onNotify(
+                                'Token Nilai Disalin!',
+                                `Kode Token Nilai untuk "${item.scenarioTitle}" berhasil disalin untuk dikirim ke Mentor.`,
+                                'success'
+                              );
+                            }}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 hover:text-white text-[11px] font-extrabold transition-all cursor-pointer"
+                            title="Salin Token Nilai untuk Mentor"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>📲 Salin Token Nilai</span>
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleDownloadHistoryPdf(item)}

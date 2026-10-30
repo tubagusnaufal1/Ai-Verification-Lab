@@ -103,46 +103,45 @@ export const BerandaView: React.FC<BerandaViewProps> = ({
   const totalSimScore = Object.values(simScores).reduce((acc, v) => acc + v, 0);
 
   return (
-    <div className="animate-page-enter space-y-14 pb-20">
+    <div className="animate-page-enter overflow-x-hidden space-y-10 sm:space-y-14 pb-20">
       {/* HERO SECTION */}
-      <section className="relative pt-12 sm:pt-16 pb-6 px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto text-center">
+      <section className="relative pt-8 sm:pt-16 pb-4 sm:pb-6 px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto text-center">
         <div
           aria-hidden="true"
           className="pointer-events-none absolute inset-x-0 -top-10 mx-auto h-72 w-full max-w-3xl bg-gradient-to-r from-blue-600/15 via-emerald-500/10 to-blue-600/15 blur-3xl -z-10"
         />
 
-        <div className="inline-flex items-center justify-center bg-blue-950/40 border border-blue-500/30 rounded-full px-4 py-1.5 mb-8 shadow-[0_0_20px_rgba(37,99,235,0.15)]">
-          <span className="text-xs sm:text-sm font-semibold text-[#60a5fa] tracking-wide">
+        <div className="inline-flex items-center justify-center bg-blue-950/40 border border-blue-500/30 rounded-full px-3.5 sm:px-4 py-1.5 mb-6 sm:mb-8 shadow-[0_0_20px_rgba(37,99,235,0.15)] max-w-full">
+          <span className="text-[11px] sm:text-sm font-semibold text-[#60a5fa] tracking-wide">
             ✨ Inisiatif Asta Cita Nusantara Poin 4: Penguatan SDM, Sains &amp; Teknologi
           </span>
         </div>
 
-        <h1 className="text-center font-extrabold text-4xl sm:text-5xl md:text-6xl leading-tight tracking-tight max-w-4xl mx-auto">
-          <span className="block text-white">Jangan hanya bertanya kepada</span>
-          <span className="block text-white mt-1">AI.</span>
+        <h1 className="text-center font-extrabold text-2xl sm:text-4xl lg:text-5xl leading-tight tracking-tight max-w-4xl mx-auto">
+          <span className="block text-white">Jangan hanya bertanya kepada AI.</span>
           <span className="block mt-1.5 bg-gradient-to-r from-[#3b82f6] to-[#10b981] bg-clip-text text-transparent">
-            Uji kebenarannya.
+            Uji kebenarannya secara ilmiah.
           </span>
         </h1>
 
-        <p className="mt-6 text-center text-[#94a3b8] text-base sm:text-lg leading-relaxed max-w-2xl mx-auto font-editorial">
+        <p className="mt-4 sm:mt-6 text-center text-[#94a3b8] text-sm sm:text-base lg:text-lg leading-relaxed max-w-2xl mx-auto font-editorial">
           Kefasihan AI seringkali menutupi halusinasi dan referensi fiktif. Ubah pendekatan Anda
           dari sekadar pengguna pasif (<em className="italic text-slate-300">knowing</em>) menjadi
           penguji aktif yang berbasis bukti (<em className="italic text-slate-300">doing</em>).
         </p>
 
-        <div className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-4">
+        <div className="mt-7 sm:mt-9 flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3 sm:gap-4">
           <button
             type="button"
             onClick={() => onNavigate('tanya-ai')}
-            className="w-full sm:w-auto bg-[#2563eb] hover:bg-[#3b82f6] text-white font-bold text-sm sm:text-base rounded-xl px-7 py-3.5 transition-all duration-200 cursor-pointer whitespace-nowrap"
+            className="w-full sm:w-auto inline-flex items-center justify-center bg-[#2563eb] hover:bg-[#3b82f6] text-white font-bold text-sm sm:text-base rounded-xl px-6 sm:px-7 py-3.5 transition-all duration-200 cursor-pointer"
           >
             Buka Tanya AI &amp; Lab Audit
           </button>
           <button
             type="button"
             onClick={() => onNavigate('challenge-lab')}
-            className="w-full sm:w-auto bg-[#0f172a] hover:bg-[#1e293b] border border-slate-700 text-white font-bold text-sm sm:text-base rounded-xl px-7 py-3.5 transition-all duration-200 cursor-pointer whitespace-nowrap"
+            className="w-full sm:w-auto inline-flex items-center justify-center bg-[#0f172a] hover:bg-[#1e293b] border border-slate-700 text-white font-bold text-sm sm:text-base rounded-xl px-6 sm:px-7 py-3.5 transition-all duration-200 cursor-pointer"
           >
             Buka Challenge &amp; Riwayat V-Score
           </button>
@@ -150,14 +149,14 @@ export const BerandaView: React.FC<BerandaViewProps> = ({
       </section>
 
       {/* PANEL INTERAKTIF: SIKLUS PEMBELAJARAN VERIFICATION-FIRST */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
-        <div className="bg-[#0b1120] border border-[#1e293b] rounded-2xl p-6 sm:p-8 shadow-xl">
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8 sm:space-y-10">
+        <div className="bg-[#0b1120] border border-[#1e293b] rounded-2xl p-5 sm:p-8 shadow-xl">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-6 border-b border-slate-800/80">
             <div>
               <div className="text-xs font-bold uppercase tracking-widest text-blue-400 mb-1">
                 Arsitektur Pedagogis Nasional
               </div>
-              <h2 className="text-2xl sm:text-3xl font-extrabold text-white">
+              <h2 className="text-xl sm:text-3xl font-extrabold text-white">
                 Siklus Pembelajaran Verification-First
               </h2>
               <p className="text-sm sm:text-base text-slate-400 mt-1 max-w-3xl">
@@ -167,18 +166,18 @@ export const BerandaView: React.FC<BerandaViewProps> = ({
                 ketahanan epistemik generasi muda Indonesia.
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
               <button
                 type="button"
                 onClick={() => onNavigate('tanya-ai')}
-                className="px-4 py-2 rounded-xl bg-blue-950/60 hover:bg-blue-900/60 border border-blue-500/40 text-blue-300 text-xs font-bold transition-all duration-300 hover:-translate-y-0.5 active:scale-95 cursor-pointer"
+                className="w-full sm:w-auto justify-center px-4 py-2.5 rounded-xl bg-blue-950/60 hover:bg-blue-900/60 border border-blue-500/40 text-blue-300 text-xs font-bold transition-all duration-300 cursor-pointer inline-flex items-center"
               >
                 1. Eksplorasi Tanya AI →
               </button>
               <button
                 type="button"
                 onClick={() => onNavigate('challenge-lab')}
-                className="px-4 py-2 rounded-xl bg-amber-950/50 hover:bg-amber-900/50 border border-amber-500/40 text-amber-300 text-xs font-bold transition-all duration-300 hover:-translate-y-0.5 active:scale-95 cursor-pointer"
+                className="w-full sm:w-auto justify-center px-4 py-2.5 rounded-xl bg-amber-950/50 hover:bg-amber-900/50 border border-amber-500/40 text-amber-300 text-xs font-bold transition-all duration-300 cursor-pointer inline-flex items-center"
               >
                 2. Coba Challenge Lab →
               </button>

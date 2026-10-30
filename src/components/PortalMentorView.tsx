@@ -5,6 +5,7 @@ import {
   buildScholarSearchUrl,
   sanitizeSnippetText,
   encodeScenarioToken,
+  getPedagogicalInterventionRecommendation,
 } from '../utils/verificationLogic';
 import { generateScenarioWithAI } from '../utils/liveSearchService';
 import {
@@ -12,6 +13,7 @@ import {
   StudentScoreEntry,
   CrowdsourcedReport,
   isMentorRole,
+  decodeSubmissionScoreToken,
 } from '../utils/storageService';
 import {
   Crown,
@@ -44,10 +46,14 @@ interface PortalMentorViewProps {
   scenarios: ChallengeScenario[];
   onAddScenario: (newScenario: ChallengeScenario) => void;
   studentScores: StudentScoreEntry[];
+  onImportStudentScoreEntry?: (entry: StudentScoreEntry) => void;
   onClearAllScores?: () => void;
   onResetScoresToDefault?: () => void;
   crowdsourcedReports: CrowdsourcedReport[];
   onPromoteReportToScenario: (reportId: string) => void;
+  onManualSyncNow?: () => void;
+  isSyncing?: boolean;
+  lastSyncedAt?: string;
   onNotify: (title: string, message: string, type?: 'success' | 'info' | 'warning') => void;
 }
 
@@ -59,10 +65,14 @@ export const PortalMentorView: React.FC<PortalMentorViewProps> = ({
   scenarios,
   onAddScenario,
   studentScores,
+  onImportStudentScoreEntry,
   onClearAllScores,
   onResetScoresToDefault,
   crowdsourcedReports,
   onPromoteReportToScenario,
+  onManualSyncNow,
+  isSyncing = false,
+  lastSyncedAt,
   onNotify,
 }) => {
   const [internalSubTab, setInternalSubTab] = useState<MentorSubTab>('scenario-builder');
@@ -101,9 +111,35 @@ export const PortalMentorView: React.FC<PortalMentorViewProps> = ({
   const [ref2Snippet, setRef2Snippet] = useState('');
   const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null);
 
-  // Gradebook Filter & 4-Stage Process Modal State
+  // Gradebook Filter, Score Token Import & 4-Stage Process Modal State
   const [scoreFilter, setScoreFilter] = useState('');
+  const [scoreTokenInput, setScoreTokenInput] = useState('');
   const [selectedProcessEntry, setSelectedProcessEntry] = useState<StudentScoreEntry | null>(null);
+
+  const handleImportScoreTokenSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!scoreTokenInput.trim()) {
+      onNotify(
+        'Tempelkan Token Nilai Peserta',
+        'Masukkan kode token nilai (AILAB-SCORE-v1:...) yang dikirimkan oleh peserta.',
+        'warning'
+      );
+      return;
+    }
+    const decoded = decodeSubmissionScoreToken(scoreTokenInput);
+    if (!decoded) {
+      onNotify(
+        'Format Token Nilai Tidak Valid',
+        'Kode token tidak dapat dibaca. Pastikan peserta menyalin seluruh teks token nilai (AILAB-SCORE-v1:...).',
+        'warning'
+      );
+      return;
+    }
+    if (onImportStudentScoreEntry) {
+      onImportStudentScoreEntry(decoded);
+    }
+    setScoreTokenInput('');
+  };
 
   const handleManualMentorLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -513,6 +549,7 @@ export const PortalMentorView: React.FC<PortalMentorViewProps> = ({
     { label: 'Tahap 4 · Analytical Justification', avg: avgStage4, max: 25 },
   ];
   const weakestStage = [...stageAverages].sort((a, b) => a.avg - b.avg)[0];
+  const pedagogicalRecommendation = getPedagogicalInterventionRecommendation(stageAverages);
 
   return (
     <div className="animate-page-enter max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
@@ -533,9 +570,27 @@ export const PortalMentorView: React.FC<PortalMentorViewProps> = ({
           </p>
         </div>
 
-        <div className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-emerald-300 text-xs font-extrabold shrink-0">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-          Status Autentikasi: MENTOR TERVERIFIKASI
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+          <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 text-xs font-extrabold">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>🟢 Live Cloud Sync Aktif (Room: HARFEST2026)</span>
+            {lastSyncedAt && (
+              <span className="hidden sm:inline text-[10px] font-mono text-emerald-400/80">
+                · {lastSyncedAt}
+              </span>
+            )}
+          </div>
+          {onManualSyncNow && (
+            <button
+              type="button"
+              onClick={onManualSyncNow}
+              disabled={isSyncing}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600/25 hover:bg-blue-600/40 border border-blue-500/40 text-blue-200 hover:text-white text-xs font-extrabold transition-all cursor-pointer disabled:opacity-60"
+            >
+              <RotateCcw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>🔄 Sinkronkan Sekarang</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -865,6 +920,28 @@ export const PortalMentorView: React.FC<PortalMentorViewProps> = ({
                 );
               })}
             </div>
+
+            {/* SPESIFIKASI 5b: KOTAK REKOMENDASI INTERVENSI PEDAGOGIS DOSEN (OTOMATIS) */}
+            <div className="bg-blue-950/35 border border-blue-500/40 rounded-xl p-4 sm:p-5 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-blue-300">
+                  📌 Rekomendasi Intervensi Pedagogis Dosen (Otomatis) —{' '}
+                  {pedagogicalRecommendation.headline}
+                </span>
+                <span className="text-xs font-mono font-bold text-amber-300 bg-amber-950/50 border border-amber-500/40 px-2.5 py-0.5 rounded">
+                  Fokus Intervensi: {pedagogicalRecommendation.weakestStageLabel} (
+                  {pedagogicalRecommendation.weakestStageAvg}/25 Poin)
+                </span>
+              </div>
+              <p className="text-xs sm:text-sm text-slate-200 leading-relaxed">
+                {pedagogicalRecommendation.diagnosis}
+              </p>
+              <ul className="list-disc list-inside text-xs text-slate-300 space-y-1 pt-1">
+                {pedagogicalRecommendation.actionItems.map((item, idx) => (
+                  <li key={idx}>{item}</li>
+                ))}
+              </ul>
+            </div>
           </div>
 
           {/* Tabel Live Gradebook Mahasiswa */}
@@ -922,6 +999,40 @@ export const PortalMentorView: React.FC<PortalMentorViewProps> = ({
               </div>
             </div>
 
+            {/* SPESIFIKASI 1c: JALUR CADANGAN ANTI-GAGAL (IMPOR TOKEN NILAI PESERTA) */}
+            <form
+              onSubmit={handleImportScoreTokenSubmit}
+              className="bg-[#0f172a] border border-amber-500/40 rounded-xl p-4 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3"
+            >
+              <div className="space-y-0.5">
+                <div className="text-xs font-extrabold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                  <KeyRound className="w-3.5 h-3.5" />
+                  📥 Impor Token Nilai Peserta (Jalur Cadangan Lintas Perangkat)
+                </div>
+                <p className="text-[11px] text-slate-300">
+                  Selain sinkronisasi otomatis via Room <strong>HARFEST2026</strong>, Anda juga dapat
+                  menempelkan kode <code className="text-amber-300 font-mono">AILAB-SCORE-v1:...</code>{' '}
+                  dari mahasiswa untuk memasukkan skor &amp; proses 4 tahap secara instan.
+                </p>
+              </div>
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0 md:w-[440px]">
+                <input
+                  type="text"
+                  value={scoreTokenInput}
+                  onChange={(e) => setScoreTokenInput(e.target.value)}
+                  placeholder="Tempel kode AILAB-SCORE-v1:... di sini"
+                  className="flex-1 bg-[#020617] border border-slate-700 focus:border-amber-500 rounded-xl px-3.5 py-2 text-xs text-white font-mono placeholder-slate-500 focus:outline-none"
+                />
+                <button
+                  type="submit"
+                  className="shrink-0 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs transition-all cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>📥 Impor Token Nilai Peserta</span>
+                </button>
+              </div>
+            </form>
+
             {filteredScores.length === 0 ? (
               <div className="text-center py-10 text-sm text-slate-400">
                 Belum ada data rekap skor mahasiswa yang sesuai. Gunakan tombol{' '}
@@ -929,86 +1040,165 @@ export const PortalMentorView: React.FC<PortalMentorViewProps> = ({
                 menyelesaikan audit.
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-800 text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
-                      <th className="py-3 px-3">Mahasiswa</th>
-                      <th className="py-3 px-3">Kasus yang Diuji &amp; Percobaan</th>
-                      <th className="py-3 px-3">Verdict &amp; Kalibrasi</th>
-                      <th className="py-3 px-3">Rincian 4 Tahap (@25)</th>
-                      <th className="py-3 px-3">Total V-Score</th>
-                      <th className="py-3 px-3">Justifikasi Analitis</th>
-                      <th className="py-3 px-3 text-right">Inspeksi Proses</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/70 text-xs">
-                    {filteredScores.map((entry) => (
-                      <tr key={entry.id} className="hover:bg-[#0f172a]/80 transition-colors">
-                        <td className="py-3.5 px-3 align-top">
-                          <div className="font-bold text-white">{entry.studentName}</div>
-                          <div className="text-[11px] text-slate-400">{entry.studentNim}</div>
+              <>
+                {/* SPESIFIKASI 2D: MOBILE CARD VIEW (< 768px) AGAR NYAMAN DI HP */}
+                <div className="md:hidden space-y-3">
+                  {filteredScores.map((entry) => (
+                    <div
+                      key={`mobile-score-${entry.id}`}
+                      className="bg-[#0f172a] border border-slate-800 rounded-xl p-4 space-y-3"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="font-extrabold text-sm text-white">
+                            {entry.studentName}
+                          </div>
+                          <div className="text-xs text-slate-400">{entry.studentNim}</div>
                           <div className="text-[10px] text-slate-500 font-mono mt-0.5">
                             {entry.timestamp}
                           </div>
-                        </td>
-                        <td className="py-3.5 px-3 align-top max-w-[220px] space-y-1">
-                          <div className="font-semibold text-slate-200">{entry.scenarioTitle}</div>
-                          <span className="inline-block text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/30">
-                            Percobaan #{entry.attemptCount ?? 1}
-                          </span>
-                        </td>
-                        <td className="py-3.5 px-3 align-top">
-                          <span
-                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-bold text-[11px] ${
-                              entry.isCalibrated
-                                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                                : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                            }`}
-                          >
-                            {entry.chosenVerdict}
-                          </span>
-                          <div className="text-[10px] text-slate-400 mt-1">
-                            Kunci: <strong>{entry.expectedVerdict}</strong>
+                        </div>
+                        <div className="text-right bg-[#020617] border border-emerald-500/40 rounded-lg px-3 py-1.5 shrink-0">
+                          <div className="text-[10px] uppercase font-bold text-slate-400">
+                            Total V-Score
                           </div>
-                        </td>
-                        <td className="py-3.5 px-3 align-top font-mono text-[11px] text-slate-300">
-                          <div>T1 Claim: {entry.stageBreakdown?.stage1ClaimAudit ?? 22}/25</div>
-                          <div>
-                            T2 Source: {entry.stageBreakdown?.stage2SourceVerification ?? 21}/25
-                          </div>
-                          <div>
-                            T3 Verdict: {entry.stageBreakdown?.stage3VerdictAccuracy ?? 25}/25
-                          </div>
-                          <div>
-                            T4 Context: {entry.stageBreakdown?.stage4JustificationQuality ?? 20}/25
-                          </div>
-                        </td>
-                        <td className="py-3.5 px-3 align-top">
                           <div className="text-base font-extrabold text-emerald-400 font-mono tabular-nums">
                             {entry.vScore} / 100
                           </div>
-                        </td>
-                        <td className="py-3.5 px-3 align-top max-w-xs">
-                          <p className="text-slate-300 italic line-clamp-3 font-editorial">
-                            &ldquo;{entry.justification}&rdquo;
-                          </p>
-                        </td>
-                        <td className="py-3.5 px-3 align-top text-right">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedProcessEntry(entry)}
-                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-600/20 hover:bg-blue-600/35 border border-blue-500/40 text-[11px] font-extrabold text-blue-300 hover:text-white transition-all cursor-pointer"
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <div className="text-xs font-bold text-slate-200">
+                          {entry.scenarioTitle}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/30">
+                            Percobaan #{entry.attemptCount ?? 1}
+                          </span>
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                              entry.isCalibrated
+                                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                                : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                            }`}
                           >
-                            <Eye className="w-3.5 h-3.5" />
-                            🔍 Detail Proses 4 Tahap
-                          </button>
-                        </td>
+                            Pilihan: {entry.chosenVerdict} (Kunci: {entry.expectedVerdict})
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1.5 bg-[#020617] border border-slate-800 rounded-lg p-2.5 font-mono text-[11px] text-slate-300">
+                        <div>T1 Claim: {entry.stageBreakdown?.stage1ClaimAudit ?? 22}/25</div>
+                        <div>
+                          T2 Source: {entry.stageBreakdown?.stage2SourceVerification ?? 21}/25
+                        </div>
+                        <div>
+                          T3 Verdict: {entry.stageBreakdown?.stage3VerdictAccuracy ?? 25}/25
+                        </div>
+                        <div>
+                          T4 Context: {entry.stageBreakdown?.stage4JustificationQuality ?? 20}/25
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-slate-300 italic line-clamp-2 font-editorial">
+                        &ldquo;{entry.justification}&rdquo;
+                      </p>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedProcessEntry(entry)}
+                        className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/35 border border-blue-500/40 text-xs font-extrabold text-blue-300 hover:text-white transition-all cursor-pointer"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        🔍 Detail Proses 4 Tahap
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* DESKTOP / TABLET TABLE VIEW (>= 768px) */}
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
+                        <th className="py-3 px-3">Mahasiswa</th>
+                        <th className="py-3 px-3">Kasus yang Diuji &amp; Percobaan</th>
+                        <th className="py-3 px-3">Verdict &amp; Kalibrasi</th>
+                        <th className="py-3 px-3">Rincian 4 Tahap (@25)</th>
+                        <th className="py-3 px-3">Total V-Score</th>
+                        <th className="py-3 px-3">Justifikasi Analitis</th>
+                        <th className="py-3 px-3 text-right">Inspeksi Proses</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/70 text-xs">
+                      {filteredScores.map((entry) => (
+                        <tr key={entry.id} className="hover:bg-[#0f172a]/80 transition-colors">
+                          <td className="py-3.5 px-3 align-top">
+                            <div className="font-bold text-white">{entry.studentName}</div>
+                            <div className="text-[11px] text-slate-400">{entry.studentNim}</div>
+                            <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                              {entry.timestamp}
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-3 align-top max-w-[220px] space-y-1">
+                            <div className="font-semibold text-slate-200">{entry.scenarioTitle}</div>
+                            <span className="inline-block text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/30">
+                              Percobaan #{entry.attemptCount ?? 1}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-3 align-top">
+                            <span
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md font-bold text-[11px] ${
+                                entry.isCalibrated
+                                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                                  : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                              }`}
+                            >
+                              {entry.chosenVerdict}
+                            </span>
+                            <div className="text-[10px] text-slate-400 mt-1">
+                              Kunci: <strong>{entry.expectedVerdict}</strong>
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-3 align-top font-mono text-[11px] text-slate-300">
+                            <div>T1 Claim: {entry.stageBreakdown?.stage1ClaimAudit ?? 22}/25</div>
+                            <div>
+                              T2 Source: {entry.stageBreakdown?.stage2SourceVerification ?? 21}/25
+                            </div>
+                            <div>
+                              T3 Verdict: {entry.stageBreakdown?.stage3VerdictAccuracy ?? 25}/25
+                            </div>
+                            <div>
+                              T4 Context: {entry.stageBreakdown?.stage4JustificationQuality ?? 20}/25
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-3 align-top">
+                            <div className="text-base font-extrabold text-emerald-400 font-mono tabular-nums">
+                              {entry.vScore} / 100
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-3 align-top max-w-xs">
+                            <p className="text-slate-300 italic line-clamp-3 font-editorial">
+                              &ldquo;{entry.justification}&rdquo;
+                            </p>
+                          </td>
+                          <td className="py-3.5 px-3 align-top text-right">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedProcessEntry(entry)}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-600/20 hover:bg-blue-600/35 border border-blue-500/40 text-[11px] font-extrabold text-blue-300 hover:text-white transition-all cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              🔍 Detail Proses 4 Tahap
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -1086,10 +1276,17 @@ export const PortalMentorView: React.FC<PortalMentorViewProps> = ({
         </div>
       )}
 
-      {/* MODAL INSPEKSI VISUAL: DETAIL PROSES 4 TAHAP SISWA */}
+      {/* MODAL INSPEKSI VISUAL: DETAIL PROSES 4 TAHAP SISWA (SPESIFIKASI 5a & 6a) */}
       {selectedProcessEntry && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
-          <div className="w-full max-w-4xl bg-[#0b1120] border-2 border-blue-500/50 text-white rounded-2xl shadow-2xl p-6 sm:p-8 space-y-6 my-8">
+        <div
+          className="fixed inset-0 z-[999] overflow-y-auto bg-slate-950/85 backdrop-blur-md flex items-start justify-center pt-24 pb-16 px-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setSelectedProcessEntry(null);
+            }
+          }}
+        >
+          <div className="w-full max-w-4xl bg-[#0b1120] border-2 border-blue-500/50 text-white rounded-2xl shadow-2xl p-6 sm:p-8 space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
               <div>
                 <div className="text-xs font-extrabold uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
@@ -1097,13 +1294,17 @@ export const PortalMentorView: React.FC<PortalMentorViewProps> = ({
                   Rekam Jejak Audit Transparan · Detail Proses 4 Tahap Siswa
                 </div>
                 <h2 className="text-xl sm:text-2xl font-extrabold text-white mt-1">
-                  {selectedProcessEntry.studentName}{' '}
+                  {selectedProcessEntry?.studentName || 'Peserta Mahasiswa'}{' '}
                   <span className="text-slate-400 text-base font-normal">
-                    ({selectedProcessEntry.studentNim})
+                    ({selectedProcessEntry?.studentNim || '-'})
                   </span>
                 </h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Skenario: <strong className="text-slate-200">{selectedProcessEntry.scenarioTitle}</strong> · Waktu Submit: {selectedProcessEntry.timestamp}
+                  Skenario:{' '}
+                  <strong className="text-slate-200">
+                    {selectedProcessEntry?.scenarioTitle || 'Audit Mandiri'}
+                  </strong>{' '}
+                  · Waktu Submit: {selectedProcessEntry?.timestamp || 'Baru saja'}
                 </p>
               </div>
 
@@ -1111,16 +1312,15 @@ export const PortalMentorView: React.FC<PortalMentorViewProps> = ({
                 <div className="bg-[#020617] border border-emerald-500/40 rounded-xl px-4 py-2 text-right">
                   <div className="text-[10px] uppercase font-bold text-slate-400">Total V-Score</div>
                   <div className="text-xl font-extrabold font-mono text-emerald-400">
-                    {selectedProcessEntry.vScore} / 100
+                    {selectedProcessEntry?.vScore ?? 0} / 100
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setSelectedProcessEntry(null)}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-extrabold cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-red-950/70 hover:bg-red-900 border border-red-500/50 text-red-200 hover:text-white text-xs font-extrabold cursor-pointer"
                 >
-                  <X className="w-4 h-4" />
-                  Tutup Detail
+                  ✕ Tutup Detail
                 </button>
               </div>
             </div>
@@ -1132,54 +1332,63 @@ export const PortalMentorView: React.FC<PortalMentorViewProps> = ({
                   Tahap 1 · Audit Mikro per Klaim &amp; Deteksi Patologi AI
                 </span>
                 <span className="text-xs font-mono font-extrabold text-emerald-400">
-                  Skor Tahap 1: {selectedProcessEntry.stageBreakdown.stage1ClaimAudit} / 25 Poin
+                  Skor Tahap 1: {selectedProcessEntry?.stageBreakdown?.stage1ClaimAudit ?? 22} / 25
+                  Poin
                 </span>
               </div>
 
-              {selectedProcessEntry.processLog?.stage1Claims &&
+              {selectedProcessEntry?.processLog?.stage1Claims &&
               selectedProcessEntry.processLog.stage1Claims.length > 0 ? (
                 <div className="space-y-2.5">
-                  {selectedProcessEntry.processLog.stage1Claims.map((cl) => (
+                  {selectedProcessEntry.processLog.stage1Claims.map((cl, idx) => (
                     <div
-                      key={cl.claimIndex}
+                      key={cl?.claimIndex ?? idx}
                       className="bg-[#020617] border border-slate-800 rounded-lg p-3.5 space-y-2 text-xs"
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <span className="font-extrabold text-blue-300">
-                          Unit Klaim #{cl.claimIndex}
+                          Unit Klaim #{cl?.claimIndex ?? idx + 1}
                         </span>
                         <span
                           className={`px-2 py-0.5 rounded font-bold text-[11px] border ${
-                            cl.isMicroAccurate
+                            cl?.isMicroAccurate
                               ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
                               : 'bg-amber-500/15 text-amber-300 border-amber-500/40'
                           }`}
                         >
-                          {cl.isMicroAccurate
+                          {cl?.isMicroAccurate
                             ? '✓ Vonis Mikro Tepat'
                             : '⚠ Vonis Mikro Meleset'}
                         </span>
                       </div>
                       <p className="text-slate-200 italic font-editorial">
-                        &ldquo;{cl.claimText}&rdquo;
+                        &ldquo;{cl?.claimText || '-'}&rdquo;
                       </p>
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-[11px]">
                         <div className="bg-[#0b1120] border border-slate-800 rounded p-2">
                           <span className="text-slate-400 block">Vonis Mikro Siswa vs Kunci:</span>
-                          <strong className="text-white">{cl.studentMicroVerdict || 'Belum Dipilih'}</strong>{' '}
-                          <span className="text-slate-400">(Kunci: {cl.expectedMicroVerdict})</span>
+                          <strong className="text-white">
+                            {cl?.studentMicroVerdict || 'Belum Dipilih'}
+                          </strong>{' '}
+                          <span className="text-slate-400">
+                            (Kunci: {cl?.expectedMicroVerdict || 'DISTORSI'})
+                          </span>
                         </div>
                         <div className="bg-[#0b1120] border border-slate-800 rounded p-2">
                           <span className="text-slate-400 block">Patologi Dipilih Siswa:</span>
-                          <strong className="text-amber-300">{cl.studentPathology || '-'}</strong>{' '}
-                          <span className="text-slate-400">({cl.expectedPathologyLabel})</span>
+                          <strong className="text-amber-300">{cl?.studentPathology || '-'}</strong>{' '}
+                          <span className="text-slate-400">
+                            ({cl?.expectedPathologyLabel || '-'})
+                          </span>
                         </div>
                         <div className="bg-[#0b1120] border border-slate-800 rounded p-2">
                           <span className="text-slate-400 block">Rujukan Bukti Dipilih:</span>
                           <strong className="text-emerald-300 font-mono">
-                            #{cl.studentEvidenceRefId || '-'}
+                            #{cl?.studentEvidenceRefId || '-'}
                           </strong>{' '}
-                          <span className="text-slate-400">(Kunci: #{cl.expectedEvidenceRefId})</span>
+                          <span className="text-slate-400">
+                            (Kunci: #{cl?.expectedEvidenceRefId || '1'})
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -1187,7 +1396,9 @@ export const PortalMentorView: React.FC<PortalMentorViewProps> = ({
                 </div>
               ) : (
                 <p className="text-xs text-slate-400">
-                  Catatan Diagnostik: {selectedProcessEntry.stageBreakdown.stage1Feedback}
+                  Catatan Diagnostik:{' '}
+                  {selectedProcessEntry?.stageBreakdown?.stage1Feedback ||
+                    'Audit mikro klaim terekam pada sistem.'}
                 </p>
               )}
             </div>
@@ -1199,46 +1410,48 @@ export const PortalMentorView: React.FC<PortalMentorViewProps> = ({
                   Tahap 2 · Pemeriksaan Sumber Bukti Primer
                 </span>
                 <span className="text-xs font-mono font-extrabold text-emerald-400">
-                  Skor Tahap 2: {selectedProcessEntry.stageBreakdown.stage2SourceVerification} / 25
-                  Poin
+                  Skor Tahap 2:{' '}
+                  {selectedProcessEntry?.stageBreakdown?.stage2SourceVerification ?? 21} / 25 Poin
                 </span>
               </div>
 
-              {selectedProcessEntry.processLog?.stage2Sources &&
+              {selectedProcessEntry?.processLog?.stage2Sources &&
               selectedProcessEntry.processLog.stage2Sources.length > 0 ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
-                  {selectedProcessEntry.processLog.stage2Sources.map((src) => (
+                  {selectedProcessEntry.processLog.stage2Sources.map((src, idx) => (
                     <div
-                      key={src.refId}
+                      key={src?.refId ?? idx}
                       className={`p-3 rounded-lg border flex items-start justify-between gap-2 ${
-                        src.wasInspected
+                        src?.wasInspected
                           ? 'bg-emerald-950/20 border-emerald-500/40 text-slate-200'
                           : 'bg-[#020617] border-slate-800 text-slate-400'
                       }`}
                     >
                       <div className="space-y-0.5">
                         <div className="font-bold text-white">
-                          Bukti #{src.refId}: {src.title}
+                          Bukti #{src?.refId ?? idx + 1}: {src?.title || 'Referensi Akademik'}
                         </div>
                         <div className="text-[11px] text-slate-400 font-mono">
-                          Domain: {src.domain}
+                          Domain: {src?.domain || 'scholar.google.com'}
                         </div>
                       </div>
                       <span
                         className={`shrink-0 text-[10px] font-extrabold px-2 py-0.5 rounded font-mono ${
-                          src.wasInspected
+                          src?.wasInspected
                             ? 'bg-emerald-500/20 text-emerald-300'
                             : 'bg-slate-800 text-slate-500'
                         }`}
                       >
-                        {src.wasInspected ? '✓ Diperiksa' : 'Belum Dicek'}
+                        {src?.wasInspected ? '✓ Diperiksa' : 'Belum Dicek'}
                       </span>
                     </div>
                   ))}
                 </div>
               ) : (
                 <p className="text-xs text-slate-400">
-                  Catatan Diagnostik: {selectedProcessEntry.stageBreakdown.stage2Feedback}
+                  Catatan Diagnostik:{' '}
+                  {selectedProcessEntry?.stageBreakdown?.stage2Feedback ||
+                    'Pemeriksaan sumber bukti terekam.'}
                 </p>
               )}
             </div>
@@ -1252,30 +1465,30 @@ export const PortalMentorView: React.FC<PortalMentorViewProps> = ({
                     Tahap 3 · Putusan Verdict Akhir
                   </span>
                   <span className="text-xs font-mono font-extrabold text-emerald-400">
-                    {selectedProcessEntry.stageBreakdown.stage3VerdictAccuracy} / 25
+                    {selectedProcessEntry?.stageBreakdown?.stage3VerdictAccuracy ?? 25} / 25
                   </span>
                 </div>
                 <div className="bg-[#020617] border border-slate-800 rounded-lg p-3.5 space-y-2 text-xs">
                   <div className="flex items-center justify-between">
                     <span className="text-slate-400">Verdict Pilihan Siswa:</span>
                     <strong className="text-white font-mono">
-                      {selectedProcessEntry.chosenVerdict}
+                      {selectedProcessEntry?.chosenVerdict || 'PARTIALLY SUPPORTED'}
                     </strong>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-slate-400">Kunci Jawaban Soal:</span>
                     <strong className="text-emerald-400 font-mono">
-                      {selectedProcessEntry.expectedVerdict}
+                      {selectedProcessEntry?.expectedVerdict || 'PARTIALLY SUPPORTED'}
                     </strong>
                   </div>
                   <div className="pt-1 border-t border-slate-800 flex items-center justify-between">
                     <span className="text-slate-400">Status Kalibrasi:</span>
                     <span
                       className={`font-extrabold ${
-                        selectedProcessEntry.isCalibrated ? 'text-emerald-400' : 'text-amber-300'
+                        selectedProcessEntry?.isCalibrated ? 'text-emerald-400' : 'text-amber-300'
                       }`}
                     >
-                      {selectedProcessEntry.isCalibrated
+                      {selectedProcessEntry?.isCalibrated
                         ? '✓ Terkalibrasi Tepat'
                         : '⚠ Belum Terkalibrasi'}
                     </span>
@@ -1290,35 +1503,38 @@ export const PortalMentorView: React.FC<PortalMentorViewProps> = ({
                     Tahap 4 · Justifikasi Analitis &amp; Kata Kunci
                   </span>
                   <span className="text-xs font-mono font-extrabold text-emerald-400">
-                    {selectedProcessEntry.stageBreakdown.stage4JustificationQuality} / 25 Poin
+                    {selectedProcessEntry?.stageBreakdown?.stage4JustificationQuality ?? 20} / 25
+                    Poin
                   </span>
                 </div>
 
                 <div className="bg-[#020617] border border-slate-800 rounded-lg p-3.5 text-xs text-slate-200 italic font-editorial leading-relaxed">
-                  &ldquo;{selectedProcessEntry.justification}&rdquo;
+                  &ldquo;{selectedProcessEntry?.justification || '-'}&rdquo;
                 </div>
 
-                {selectedProcessEntry.processLog && (
+                {selectedProcessEntry?.processLog?.stage4Justification && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
                     <div className="bg-[#020617] border border-slate-800 rounded p-2">
                       <span className="text-slate-400 block">Kata Kunci Topik Terdeteksi:</span>
                       <strong className="text-blue-300">
-                        {selectedProcessEntry.processLog.stage4Justification.topicKeywordsFound
-                          .length > 0
-                          ? selectedProcessEntry.processLog.stage4Justification.topicKeywordsFound.join(
-                              ', '
-                            )
+                        {(selectedProcessEntry?.processLog?.stage4Justification
+                          ?.topicKeywordsFound ?? []).length > 0
+                          ? (
+                              selectedProcessEntry?.processLog?.stage4Justification
+                                ?.topicKeywordsFound ?? []
+                            ).join(', ')
                           : '-'}
                       </strong>
                     </div>
                     <div className="bg-[#020617] border border-slate-800 rounded p-2">
                       <span className="text-slate-400 block">Istilah Verifikasi Terdeteksi:</span>
                       <strong className="text-emerald-300">
-                        {selectedProcessEntry.processLog.stage4Justification.analyticalKeywordsFound
-                          .length > 0
-                          ? selectedProcessEntry.processLog.stage4Justification.analyticalKeywordsFound.join(
-                              ', '
-                            )
+                        {(selectedProcessEntry?.processLog?.stage4Justification
+                          ?.analyticalKeywordsFound ?? []).length > 0
+                          ? (
+                              selectedProcessEntry?.processLog?.stage4Justification
+                                ?.analyticalKeywordsFound ?? []
+                            ).join(', ')
                           : '-'}
                       </strong>
                     </div>

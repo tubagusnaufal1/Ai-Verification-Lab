@@ -75,11 +75,11 @@ export const InitialLoginGate: React.FC<InitialLoginGateProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-[#020617] text-slate-100 flex flex-col justify-between px-4 sm:px-6 lg:px-8 py-10 selection:bg-blue-600 selection:text-white">
+    <div className="min-h-screen overflow-x-hidden bg-[#020617] text-slate-100 flex flex-col justify-between px-4 sm:px-6 lg:px-8 py-6 sm:py-10 selection:bg-blue-600 selection:text-white">
       {/* Top Academic Header */}
-      <header className="max-w-6xl w-full mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-800/80">
+      <header className="max-w-6xl w-full mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 pb-5 sm:pb-6 border-b border-slate-800/80">
         <div className="flex items-center gap-3.5">
-          <div className="w-11 h-11 rounded-xl bg-blue-600 flex items-center justify-center text-white font-extrabold text-sm tracking-wider shadow-sm">
+          <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-blue-600 flex items-center justify-center text-white font-extrabold text-xs sm:text-sm tracking-wider shadow-sm shrink-0">
             LAB
           </div>
           <div>
@@ -94,18 +94,18 @@ export const InitialLoginGate: React.FC<InitialLoginGateProps> = ({
 
         <div className="flex items-center gap-2 text-xs text-slate-400">
           <ShieldCheck className="w-4 h-4 text-blue-400 shrink-0" />
-          <span>Strict Role-Based Authentication · Calm Academic Design</span>
+          <span>Strict Role-Based Authentication · Live Cloud Sync (HARFEST2026)</span>
         </div>
       </header>
 
       {/* Center Role Gate Content */}
-      <main className="max-w-6xl w-full mx-auto my-auto py-10 space-y-10">
+      <main className="max-w-6xl w-full mx-auto my-auto py-6 sm:py-10 space-y-8 sm:space-y-10">
         <div className="text-center max-w-3xl mx-auto space-y-3">
           <div className="text-xs font-semibold tracking-widest uppercase text-blue-400">
             Gerbang Autentikasi Laboratorium Epistemik
           </div>
           <h1
-            className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-white tracking-tight leading-tight"
+            className="text-2xl sm:text-4xl lg:text-5xl font-extrabold text-white tracking-tight leading-tight"
             style={{ textWrap: 'balance' }}
           >
             Pilih Peran Akses Sesi Verifikasi Anda

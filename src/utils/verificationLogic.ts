@@ -228,6 +228,40 @@ export interface ThesisEpistemicConclusion {
   epistemicSummary: string;
 }
 
+export type PreAuditIntuitionType = 'CONVINCING' | 'DOUBTFUL' | 'FABRICATED';
+
+export interface CognitiveShiftEvaluation {
+  preAuditIntuition: PreAuditIntuitionType;
+  preAuditLabel: string;
+  postAuditVerdict: VerdictType;
+  expectedVerdict: VerdictType;
+  shiftCategory:
+    | 'FLUENCY_ILLUSION_BROKEN'
+    | 'CRITICAL_SKEPTICISM_VALIDATED'
+    | 'ACCURATE_RECOGNITION'
+    | 'NEEDS_DEEPER_CALIBRATION';
+  headline: string;
+  analysisText: string;
+}
+
+export interface ForensicToken {
+  text: string;
+  highlightType:
+    | 'NONE'
+    | 'EXTREME_CLAIM'
+    | 'QUANTITATIVE_YEAR'
+    | 'CRITICAL_STANCE'
+    | 'METHODOLOGY_SIGNAL';
+}
+
+export interface PedagogicalInterventionRecommendation {
+  weakestStageLabel: string;
+  weakestStageAvg: number;
+  headline: string;
+  diagnosis: string;
+  actionItems: string[];
+}
+
 export interface AuditResultRecord {
   id: string;
   claimSummary: string;
@@ -244,6 +278,8 @@ export interface AuditResultRecord {
   timestamp: string;
   processLog?: StudentAuditProcessLog;
   thesisConclusion?: ThesisEpistemicConclusion;
+  preAuditIntuition?: PreAuditIntuitionType;
+  cognitiveShift?: CognitiveShiftEvaluation;
 }
 
 export interface ChallengeScenario {
@@ -319,6 +355,42 @@ export function isGenuinePdfUrl(url: string): boolean {
  * "dari latar belakang di atas, penelitian ini akan menganalisa...", "metode yang digunakan adalah..."),
  * karakter aneh (||, -., ..), dan potongan elipsis sehingga menjadi kalimat substansi temuan yang utuh.
  */
+/**
+ * SPESIFIKASI 1c: Memperbaiki tanda baca rusak atau kurung sitasi yang belum tertutup
+ * seperti "(Horriyah 2011." atau "(Horriyah, 2011." menjadi "(Horriyah, 2011)".
+ */
+export function repairBrokenCitationsAndPunctuation(input: string): string {
+  if (!input) return '';
+  let out = input;
+
+  // 1. Perbaiki sitasi "(Nama 2011." atau "(Nama, 2011." atau "(Nama 2011)" menjadi "(Nama, 2011)"
+  out = out.replace(
+    /\(\s*([A-Z][A-Za-z'.\s&-]{1,35}?)\s*,?\s*((?:19|20)\d{2}[a-z]?)\s*[.,;:]?\s*(?:\)|(?=[.,;:\s]|$))/g,
+    (_m, author: string, year: string) => {
+      const cleanAuthor = author
+        .trim()
+        .replace(/\b(dkk|et al)\.?,?$/i, '$1.')
+        .replace(/[,.\s]+$/, '');
+      return `(${cleanAuthor}, ${year})`;
+    }
+  );
+
+  // 2. Jika masih ada kurung buka yang belum ditutup di akhir klausa/kalimat
+  const openParens = (out.match(/\(/g) || []).length;
+  const closeParens = (out.match(/\)/g) || []).length;
+  if (openParens > closeParens) {
+    out = out.replace(/\(([^()]{2,60}?)\s*([.!?])?$/, '($1)$2');
+  }
+
+  return out;
+}
+
+/**
+ * SPESIFIKASI 1a: Membersihkan kalimat meta-abstrak mentah ("Penelitian ini mengkaji tentang...",
+ * "dari latar belakang di atas, penelitian ini akan menganalisa...", "metode yang digunakan adalah..."),
+ * menghapus frasa sambung robotik di tengah paragraf, memperbaiki sitasi rusak seperti "(Horriyah 2011.",
+ * serta membersihkan karakter aneh (||, -., ..) dan potongan elipsis.
+ */
 export function cleanAcademicSnippet(rawSnippet: string, title = ''): string {
   if (!rawSnippet && !title) return '';
   const cleanTitle = (title || '')
@@ -334,6 +406,23 @@ export function cleanAcademicSnippet(rawSnippet: string, title = ''): string {
     .replace(/\s*--\s*/g, ' — ')
     .replace(/\b(?:ABSTRAK|ABSTRACT)\s*[:.-]?\s*/gi, '')
     .trim();
+
+  // SPESIFIKASI 1: Hapus total frasa penghubung robotik template jika terikut pada teks
+  const roboticConnectorPatterns: RegExp[] = [
+    /\bLebih\s+lanjut,\s+dalam\s+perspektif\s+implementasi\s+dan\s+evaluasi\s+faktual,?\s*/gi,
+    /\bPada\s+aspek\s+kebijakan\s+dan\s+epidemiologi,?\s*/gi,
+    /\bSejalan\s+dengan\s+(?:hal|temuan)\s+tersebut,\s+telaah\s+pada\s+rujukan\s+kedua(?:\s+dan\s+ketiga)?\s+(?:menunjukkan|mengonfirmasi)\s+bahwa\s*/gi,
+    /\bDi\s+samping\s+itu,\s+(?:bukti\s+kelima|penelusuran\s+pada\s+literatur\s+kelima(?:\s+dan\s+keenam)?)\s+(?:menjelaskan|menunjukkan)\s+bahwa\s*/gi,
+    /\bTemuan\s+tersebut\s+diperkuat\s+oleh\s+(?:literatur\s+keenam|telaah\s+sekunder)\s+yang\s+(?:mencatat|mengonfirmasi)\s+bahwa\s*/gi,
+    /\bPada\s+dimensi\s+analisis\s+lanjutan\s+dan\s+bukti\s+pembanding,?\s*/gi,
+    /\bSelain\s+itu,\s+evaluasi\s+empiris\s+pada\s+rujukan\s+kelima(?:\s+dan\s+keenam)?\s+menjelaskan\s+bahwa\s*/gi,
+    /\bLebih\s+lanjut,\s+evaluasi\s+historiografi\s+dan\s+telaah\s+sumber\s+kedua\s+mencatat\s+bahwa\s*/gi,
+    /\bLebih\s+lanjut,\s+dalam\s+konteks\s+kebijakan\s+berbasis\s+bukti\s+di\s+Indonesia,?\s*/gi,
+  ];
+
+  for (const rPattern of roboticConnectorPatterns) {
+    text = text.replace(rPattern, '');
+  }
 
   // Hapus klausa meta-metodologi/abstrak yang tidak memuat substansi temuan
   const metaAbstractPatterns: RegExp[] = [
@@ -375,6 +464,9 @@ export function cleanAcademicSnippet(rawSnippet: string, title = ''): string {
       text = withoutTrailingEllipsis;
     }
   }
+
+  // Perbaiki kurung sitasi yang belum tertutup seperti "(Horriyah 2011." -> "(Horriyah, 2011)"
+  text = repairBrokenCitationsAndPunctuation(text);
 
   text = text
     .replace(/\s*(\.{2,}|…)\s*/g, ' ')
@@ -524,7 +616,7 @@ export function detectEpistemicStanceForTopic(
   if (hasCriticalOrDebunkingStance) {
     statusCategory = 'SPEKULATIF_DIPERDEBATKAN';
     statusLabel =
-      '⚠️ Klaim Spekulatif / Diperdebatkan (Dikritisi dalam Studi Kritis / Ad-Dakhil / Sumber Sekunder)';
+      '⚠️ Klaim Spekulatif / Dikritisi Literatur (Ad-Dakhil / Studi Kritis)';
     const critRefsLabel =
       criticalRefIds.length > 0
         ? `Bukti #${criticalRefIds.join(', #')}`
@@ -565,7 +657,7 @@ export function sanitizeSynthesisParagraphs(rawSynthesis: string): string {
   return rawSynthesis
     .split(/\n\s*\n/)
     .map((para) => {
-      let cleaned = para
+      let cleaned = repairBrokenCitationsAndPunctuation(para)
         .replace(/\s*(\.{2,}|…)\s*/g, ' ')
         .replace(/\s+([,.;!?])/g, '$1')
         .replace(/,\s*(\[\d+\])/g, ' $1')
@@ -582,10 +674,12 @@ export function sanitizeSynthesisParagraphs(rawSynthesis: string): string {
 }
 
 /**
- * SPESIFIKASI 1b & 2: Mesin Sintesis Bukti Otomatis Berbasis Topik (buildTopicRelevantSynthesis):
- * - Menggunakan cleanAcademicSnippet agar tidak menyalin kalimat meta-abstrak ("Penelitian ini mengkaji tentang...").
- * - TIDAK PERNAH menambahkan kalimat penutup boilerplate sistem ("Oleh sebab itu, proses audit informasi wajib menyandingkan...").
- * - Menyusun 2 paragraf sintesis akademik (3-4 kalimat substantif) yang langsung menguji/menjawab topik pengguna dengan sitasi [1]-[6].
+ * SPESIFIKASI 1: Mesin Sintesis Bukti Otomatis Berbasis Topik (buildTopicRelevantSynthesis):
+ * - Menghapus total seluruh kalimat sambung template robotik ("Lebih lanjut, dalam perspektif...",
+ *   "Sejalan dengan hal tersebut, telaah pada rujukan kedua...", "Di samping itu, bukti kelima...", dll.).
+ * - Merangkai kalimat bersih dari snippet dengan kata hubung akademik yang netral dan alami:
+ *   "Berdasarkan literatur [1], ...", "Sementara itu, kajian pada sumber [2] mencatat bahwa...",
+ *   "Di sisi lain, penelitian [4] menyoroti bahwa...".
  */
 export function buildTopicRelevantSynthesis(
   query: string,
@@ -597,39 +691,31 @@ export function buildTopicRelevantSynthesis(
     .map((r) => cleanAcademicSnippet(r.snippet, r.title).replace(/[.!?]+$/, '').trim())
     .filter((s) => s.length > 15);
 
-  const stance = detectEpistemicStanceForTopic(cleanQuery, references);
-
   const s1 =
     cleanedSnippets[0] ||
-    `Kajian literatur pertama mengenai ${cleanQuery} menguraikan temuan empiris utama yang teridentifikasi pada penelitian lapangan`;
+    `kajian mengenai ${cleanQuery} menguraikan temuan empiris utama yang teridentifikasi pada penelitian lapangan`;
   const s2 =
     cleanedSnippets[1] ||
-    `Telaah kedua mengenai ${cleanQuery} memperlihatkan hubungan antar-variabel yang dianalisis berdasarkan data observasional`;
+    `analisis variabel mengenai ${cleanQuery} memperlihatkan hubungan yang diukur berdasarkan data observasional`;
   const s3 =
     cleanedSnippets[2] ||
-    `Publikasi ketiga menyoroti aspek historis dan evaluasi metodologis terkait ${cleanQuery}`;
+    `evaluasi metodologis terkait ${cleanQuery} menyoroti validitas historis dan parameter sampel`;
   const s4 =
     cleanedSnippets[3] ||
-    `Studi keempat memberikan analisis komparatif mengenai validitas bukti dan konteks ${cleanQuery}`;
+    `analisis komparatif mengenai ${cleanQuery} menguji kecocokan klaim terhadap bukti primer`;
   const s5 =
     cleanedSnippets[4] ||
-    `Bukti kelima menguraikan karakteristik sampel serta variabel penentu dalam menafsirkan temuan ${cleanQuery}`;
+    `karakteristik sampel serta variabel penentu dalam menafsirkan temuan ${cleanQuery} perlu diperhatikan secara proporsional`;
   const s6 =
     cleanedSnippets[5] ||
-    `Referensi keenam memaparkan verifikasi dokumen sumber primer terkait proposisi ${cleanQuery}`;
+    `verifikasi dokumen sumber primer terkait proposisi ${cleanQuery} mengonfirmasi pentingnya rujukan terindeks`;
 
   const lowerFirst = (str: string) =>
     /^[A-Z]{2,}\b/.test(str) ? str : str.charAt(0).toLowerCase() + str.slice(1);
 
-  if (stance.hasCriticalOrDebunkingStance) {
-    const p1 = `Kajian literatur terhadap klaim "${cleanQuery}" memperlihatkan adanya dikotomi antara narasi spekulatif populer dengan hasil penelitian akademik kritis: ${lowerFirst(s1)} [1]. Lebih lanjut, evaluasi historiografi dan telaah sumber kedua mencatat bahwa ${lowerFirst(s2)} [2], sementara dokumen ketiga menjelaskan bahwa ${lowerFirst(s3)} [3].`;
-    const p2 = `Dari sudut pandang metodologi pembuktian ilmiah (termasuk analisis studi kritis / Ad-Dakhil), ${lowerFirst(s4)} [4]. Di samping itu, penelusuran pada literatur kelima dan keenam menunjukkan bahwa ${lowerFirst(s5)} [5], serta menegaskan bahwa ${lowerFirst(s6)} [6].`;
-    return sanitizeSynthesisParagraphs(`${p1}\n\n${p2}`);
-  }
+  const p1 = `Berdasarkan literatur [1], ${lowerFirst(s1)} [1]. Sementara itu, kajian pada sumber [2] mencatat bahwa ${lowerFirst(s2)} [2]. Adapun penelitian [3] menguraikan bahwa ${lowerFirst(s3)} [3].`;
 
-  const p1 = `Kajian ilmiah mengenai "${cleanQuery}" menunjukkan bahwa ${lowerFirst(s1)} [1]. Sejalan dengan temuan tersebut, telaah pada rujukan kedua dan ketiga mengonfirmasi bahwa ${lowerFirst(s2)} [2], serta memperlihatkan bahwa ${lowerFirst(s3)} [3].`;
-
-  const p2 = `Pada dimensi analisis lanjutan dan bukti pembanding, ${lowerFirst(s4)} [4]. Selain itu, evaluasi empiris pada rujukan kelima dan keenam menjelaskan bahwa ${lowerFirst(s5)} [5], sekaligus mencatat bahwa ${lowerFirst(s6)} [6].`;
+  const p2 = `Di sisi lain, penelitian [4] menyoroti bahwa ${lowerFirst(s4)} [4]. Selanjutnya, kajian pada sumber [5] mencatat bahwa ${lowerFirst(s5)} [5], sedangkan literatur [6] menjelaskan bahwa ${lowerFirst(s6)} [6].`;
 
   return sanitizeSynthesisParagraphs(`${p1}\n\n${p2}`);
 }
@@ -1702,6 +1788,8 @@ export function evaluateVerdictAndCalculateVScore(params: {
   inspectedReferenceIds?: number[];
   semanticJustificationScore?: number;
   references?: SearchReference[];
+  preAuditIntuition?: PreAuditIntuitionType;
+  thesisQuery?: string;
 }): AuditResultRecord {
   const {
     currentVScore,
@@ -1714,6 +1802,8 @@ export function evaluateVerdictAndCalculateVScore(params: {
     inspectedReferenceIds = [],
     semanticJustificationScore,
     references = [],
+    preAuditIntuition = 'CONVINCING',
+    thesisQuery,
   } = params;
 
   // Evaluasi Tahap 4 lebih dulu agar bisa digunakan untuk mendeteksi pemikiran kritis peserta yang valid
@@ -1731,7 +1821,7 @@ export function evaluateVerdictAndCalculateVScore(params: {
   }
 
   // Deteksi Sikap Epistemik Literatur (Studi Kritis / Ad-Dakhil / Isra'iliyat / Media Sekunder)
-  const epistemicStance = detectEpistemicStanceForTopic(claimText, references);
+  const epistemicStance = detectEpistemicStanceForTopic(thesisQuery || claimText, references);
 
   // Hitung rekap Vonis Mikro pilihan peserta untuk memeriksa konsistensi logis Tahap 1 -> Tahap 3
   const totalClaims = Math.max(1, extractedClaims.length);
@@ -2012,11 +2102,14 @@ export function evaluateVerdictAndCalculateVScore(params: {
     },
   };
 
+  const finalExpectedVerdict = isCriticallyCalibrated ? verdict : effectiveExpectedVerdict;
+  const cognitiveShift = evaluateCognitiveShift(preAuditIntuition, verdict, finalExpectedVerdict);
+
   return {
     id: `audit-${Date.now()}`,
     claimSummary: claimText.length > 140 ? `${claimText.slice(0, 140)}...` : claimText,
     verdict,
-    expectedVerdict: isCriticallyCalibrated ? verdict : effectiveExpectedVerdict,
+    expectedVerdict: finalExpectedVerdict,
     isCalibrated,
     justification: justification.trim(),
     vScoreDelta,
@@ -2042,6 +2135,8 @@ export function evaluateVerdictAndCalculateVScore(params: {
     }),
     processLog,
     thesisConclusion,
+    preAuditIntuition,
+    cognitiveShift,
   };
 }
 
@@ -2070,6 +2165,215 @@ export function formatReferencesToAPA7(references: SearchReference[]): string[] 
  * bebas kalimat abstrak mentah, dan secara kritis membedakan hipotesis spekulatif (Ad-Dakhil / Isra'iliyat)
  * dari fakta historis/empiris primer.
  */
+/**
+ * SPESIFIKASI 3: Evaluasi Dampak Kognitif (Pre-Audit Intuition vs Post-Audit Shift)
+ * Membuktikan pematahan Ilusi Kefasihan AI (Fluency Heuristic) ketika peserta membandingkan
+ * kesan awal sebelum membedah bukti dengan putusan akhir berbasis 6 bukti primer.
+ */
+export function evaluateCognitiveShift(
+  preAuditIntuition: PreAuditIntuitionType = 'CONVINCING',
+  chosenVerdict: VerdictType,
+  expectedVerdict: VerdictType
+): CognitiveShiftEvaluation {
+  const labelMap: Record<PreAuditIntuitionType, string> = {
+    CONVINCING: '1. Terlihat Meyakinkan & Akurat',
+    DOUBTFUL: '2. Agak Meragukan',
+    FABRICATED: '3. Terlihat Mengada-ada',
+  };
+  const preAuditLabel = labelMap[preAuditIntuition] || labelMap.CONVINCING;
+
+  if (
+    preAuditIntuition === 'CONVINCING' &&
+    (chosenVerdict !== 'VERIFIED' || expectedVerdict !== 'VERIFIED')
+  ) {
+    return {
+      preAuditIntuition,
+      preAuditLabel,
+      postAuditVerdict: chosenVerdict,
+      expectedVerdict,
+      shiftCategory: 'FLUENCY_ILLUSION_BROKEN',
+      headline: '🎯 Ilusi Kefasihan AI Terpatahkan (Fluency Heuristic Broken!)',
+      analysisText: `Sebelum membedah bukti, intuisi awal Anda menilai teks AI "${preAuditLabel}" karena gaya bahasa akademiknya yang tampak fasih. Namun setelah melakukan audit silang terhadap 6 bukti primer, Anda berhasil membongkar distorsi/halusinasi di dalamnya dan menggeser putusan akhir ke ${chosenVerdict}. Pergeseran kognitif ini membuktikan efektivitas protokol Verification-First AI Literacy!`,
+    };
+  }
+
+  if (
+    (preAuditIntuition === 'DOUBTFUL' || preAuditIntuition === 'FABRICATED') &&
+    (chosenVerdict !== 'VERIFIED' || expectedVerdict !== 'VERIFIED')
+  ) {
+    return {
+      preAuditIntuition,
+      preAuditLabel,
+      postAuditVerdict: chosenVerdict,
+      expectedVerdict,
+      shiftCategory: 'CRITICAL_SKEPTICISM_VALIDATED',
+      headline: '🛡️ Skeptisisme Epistemik Terbukti Tepat (Critical Vigilance Confirmed)',
+      analysisText: `Sejak awal Anda tidak langsung terperdaya oleh kefasihan bahasa AI (Intuisi Awal: "${preAuditLabel}"), kemudian berhasil membuktikan secara metodologis letak distorsi atau klaim tanpa bukti primer melalui putusan akhir ${chosenVerdict}.`,
+    };
+  }
+
+  if (chosenVerdict === 'VERIFIED' && expectedVerdict === 'VERIFIED') {
+    return {
+      preAuditIntuition,
+      preAuditLabel,
+      postAuditVerdict: chosenVerdict,
+      expectedVerdict,
+      shiftCategory: 'ACCURATE_RECOGNITION',
+      headline: '✅ Validasi Konsensus Bukti Primer Terkonfirmasi',
+      analysisText: `Intuisi awal Anda ("${preAuditLabel}") telah diuji secara ketat terhadap ke-6 dokumen referensi primer dan terkonfirmasi bahwa seluruh klaim didukung oleh literatur ilmiah yang valid (${chosenVerdict}).`,
+    };
+  }
+
+  return {
+    preAuditIntuition,
+    preAuditLabel,
+    postAuditVerdict: chosenVerdict,
+    expectedVerdict,
+    shiftCategory: 'NEEDS_DEEPER_CALIBRATION',
+    headline: '⚠️ Waspada Efek Ilusi Kefasihan AI (Fluency Heuristic Warning)',
+    analysisText: `Intuisi awal Anda ("${preAuditLabel}") berlanjut pada putusan ${chosenVerdict}, sedangkan kalibrasi bukti primer menunjukkan ${expectedVerdict}. Teks AI sering menggunakan struktur kalimat ilmiah yang rapi untuk menyamarkan over-generalisasi atau sitasi fiktif.`,
+  };
+}
+
+/**
+ * SPESIFIKASI 4: Forensic Highlighter (Sorot Kata Kritis & Sinyal Epistemik)
+ * Memecah kalimat menjadi token untuk menyorot kata klaim ekstrem/angka pada Kolom Klaim (CLAIM)
+ * serta sinyal evaluasi/metodologi pada Kartu Bukti (EVIDENCE).
+ */
+export function tokenizeForensicHighlights(
+  text: string,
+  mode: 'CLAIM' | 'EVIDENCE'
+): ForensicToken[] {
+  if (!text) return [];
+
+  const regex =
+    mode === 'CLAIM'
+      ? /(\b(?:100%|pasti|seluruh|semua|tidak\s+ada\s+tandingannya|terbukti\s+mutlak|mutlak|permanen|tanpa\s+terkecuali|penyebab\s+tunggal|satu-satunya|gagal\s+total|otomatis)\b|\b\d+(?:[.,]\d+)?(?:\s*%|\s*kali\s+lipat)\b|\b(?:19|20)\d{2}\b|DOI:\s*[^\s,)]+)/gi
+      : /(\b(?:studi\s+kritis|ad-dakhil|addakhil|isra['’]?iliyat|israiliyat|belum\s+terkonfirmasi|tidak\s+terbukti|mitos|kontroversi|bantahan|spekulatif|fiktif|ghost\s+citation|klaim\s+sepihak|perdebatan|risiko|korelasi|sampel|variabel|perancu|multifaktorial|autoimun|observasional|peer-review|terbatas|bertahap|empiris|primer|registri)\b)/gi;
+
+  const parts = text.split(regex);
+  const tokens: ForensicToken[] = [];
+
+  for (const part of parts) {
+    if (!part) continue;
+    if (mode === 'CLAIM') {
+      if (
+        /^(?:100%|pasti|seluruh|semua|tidak\s+ada\s+tandingannya|terbukti\s+mutlak|mutlak|permanen|tanpa\s+terkecuali|penyebab\s+tunggal|satu-satunya|gagal\s+total|otomatis)$/i.test(
+          part
+        )
+      ) {
+        tokens.push({ text: part, highlightType: 'EXTREME_CLAIM' });
+      } else if (
+        /^(?:\d+(?:[.,]\d+)?(?:\s*%|\s*kali\s+lipat)|(?:19|20)\d{2}|DOI:\s*[^\s,)]+)$/i.test(
+          part
+        )
+      ) {
+        tokens.push({ text: part, highlightType: 'QUANTITATIVE_YEAR' });
+      } else {
+        tokens.push({ text: part, highlightType: 'NONE' });
+      }
+    } else {
+      if (
+        /^(?:studi\s+kritis|ad-dakhil|addakhil|isra['’]?iliyat|israiliyat|belum\s+terkonfirmasi|tidak\s+terbukti|mitos|kontroversi|bantahan|spekulatif|fiktif|ghost\s+citation|klaim\s+sepihak|perdebatan)$/i.test(
+          part
+        )
+      ) {
+        tokens.push({ text: part, highlightType: 'CRITICAL_STANCE' });
+      } else if (
+        /^(?:risiko|korelasi|sampel|variabel|perancu|multifaktorial|autoimun|observasional|peer-review|terbatas|bertahap|empiris|primer|registri)$/i.test(
+          part
+        )
+      ) {
+        tokens.push({ text: part, highlightType: 'METHODOLOGY_SIGNAL' });
+      } else {
+        tokens.push({ text: part, highlightType: 'NONE' });
+      }
+    }
+  }
+
+  return tokens;
+}
+
+/**
+ * SPESIFIKASI 5: Rekomendasi Intervensi Pedagogis Dosen (Otomatis) berdasarkan rata-rata skor 4 tahap di kelas.
+ */
+export function getPedagogicalInterventionRecommendation(
+  stageAverages: Array<{ label: string; avg: number; max: number }>
+): PedagogicalInterventionRecommendation {
+  const safeStages =
+    stageAverages && stageAverages.length > 0
+      ? stageAverages
+      : [
+          { label: 'Tahap 1 · Claim & Pathology Audit', avg: 22, max: 25 },
+          { label: 'Tahap 2 · Source Verification', avg: 21, max: 25 },
+          { label: 'Tahap 3 · Verdict Accuracy', avg: 23, max: 25 },
+          { label: 'Tahap 4 · Analytical Justification', avg: 20, max: 25 },
+        ];
+
+  const weakest = [...safeStages].sort((a, b) => a.avg - b.avg)[0];
+  const lowerLabel = weakest.label.toLowerCase();
+
+  if (lowerLabel.includes('tahap 1') || lowerLabel.includes('claim')) {
+    return {
+      weakestStageLabel: weakest.label,
+      weakestStageAvg: weakest.avg,
+      headline:
+        'Fokus Intervensi: Penguatan Dekonstruksi Klaim & Identifikasi 7 Taksonomi Patologi AI',
+      diagnosis: `Rata-rata kelas terendah berada pada ${weakest.label} (${weakest.avg}/25). Mahasiswa masih cenderung menilai paragraf AI secara utuh tanpa membedah klaim per kalimat atau membedakan Distorsi Statistik vs Kausalitas Semu.`,
+      actionItems: [
+        'Latih mahasiswa mengaktifkan tombol [🔦 Sorot Kata Kritis & Sinyal Epistemik] untuk menandai kata mutlak ("100%", "seluruh", "pasti").',
+        'Berikan latihan membedakan Over-Generalisasi (sampel sempit ke populasi nasional) dan Ghost Citation pada teks pendek.',
+      ],
+    };
+  }
+
+  if (lowerLabel.includes('tahap 2') || lowerLabel.includes('source')) {
+    return {
+      weakestStageLabel: weakest.label,
+      weakestStageAvg: weakest.avg,
+      headline:
+        'Fokus Intervensi: Disiplin Lateral Reading & Validasi Kredibilitas Sumber Primer vs Media Sekunder',
+      diagnosis: `Rata-rata kelas terendah berada pada ${weakest.label} (${weakest.avg}/25). Sebagian mahasiswa belum memeriksa minimal 3 kartu bukti primer atau belum membedakan jurnal peer-review dari portal berita sekunder.`,
+      actionItems: [
+        'Wajibkan mahasiswa memeriksa lencana kredibilitas sumber (Jurnal Akademik Primer vs Sumber Sekunder / Media Populer) dan lencana Literatur Pengkritisi (Ad-Dakhil / Studi Kritis).',
+        'Instruksikan mahasiswa mencocokkan nomor bukti (#1–#6) pada setiap unit klaim sebelum menulis kesimpulan.',
+      ],
+    };
+  }
+
+  if (lowerLabel.includes('tahap 3') || lowerLabel.includes('verdict')) {
+    return {
+      weakestStageLabel: weakest.label,
+      weakestStageAvg: weakest.avg,
+      headline:
+        'Fokus Intervensi: Kalibrasi Konsistensi Vonis Mikro (Tahap 1) ke Putusan Verdict Akhir (Tahap 3)',
+      diagnosis: `Rata-rata kelas terendah berada pada ${weakest.label} (${weakest.avg}/25). Mahasiswa sudah menemukan distorsi pada klaim mikro, tetapi masih ragu antara memilih PARTIALLY SUPPORTED vs UNSUPPORTED.`,
+      actionItems: [
+        'Gunakan kotak "Panduan Konsistensi Verdict" di Meja Audit: jika data dasar benar namun konteks/sampel dipelintir → pilih PARTIALLY SUPPORTED; jika sitasi/fakta inti fiktif → pilih UNSUPPORTED.',
+        'Diskusikan hasil "Tes Ilusi Kefasihan AI (Pre-Audit vs Post-Audit Shift)" di kelas untuk mematahkan bias percaya buta pada kalimat AI yang fasih.',
+      ],
+    };
+  }
+
+  return {
+    weakestStageLabel: weakest.label,
+    weakestStageAvg: weakest.avg,
+    headline:
+      'Fokus Intervensi: Penajaman Argumen Analitis Berbasis Bukti (Evidence-Based Justification)',
+    diagnosis: `Rata-rata kelas terendah berada pada ${weakest.label} (${weakest.avg}/25). Mahasiswa sudah mampu memilih Verdict yang tepat, namun argumen tertulisnya masih terlalu singkat atau belum mengutip fakta spesifik dari bukti primer.`,
+    actionItems: [
+      'Arahkan mahasiswa memenuhi 3 Indikator Checklist Real-Time Tahap 4: minimal 12 kata bermakna, menyebut >=2 kata kunci topik, dan menyertakan istilah metodologis (bukti, jurnal, sampel, korelasi, studi kritis).',
+      'Gunakan fitur Verified Academic Rewriter pasca-audit sebagai model penulisan paragraf akademik yang bebas klaim mutlak.',
+    ],
+  };
+}
+
+/**
+ * SPESIFIKASI 1 & 5b: Verified Academic Rewriter:
+ * Menyusun ulang paragraf klaim AI menjadi Paragraf Akademik Terkoreksi yang bebas halusinasi,
+ * bebas kalimat penghubung robotik, dan secara kritis membedakan hipotesis spekulatif (Ad-Dakhil / Isra'iliyat)
+ * dari fakta historis/empiris primer.
+ */
 export function generateVerifiedAcademicRewrite(
   claimText: string,
   references: SearchReference[],
@@ -2083,13 +2387,13 @@ export function generateVerifiedAcademicRewrite(
 
   const s1 = references[0]
     ? cleanAcademicSnippet(references[0].snippet, references[0].title).replace(/[.!?]+$/, '')
-    : 'Bukti literatur primer menunjukkan adanya korelasi terukur pada populasi sampel yang diteliti';
+    : 'bukti literatur primer menunjukkan adanya korelasi terukur pada populasi sampel yang diteliti';
   const s2 = references[1]
     ? cleanAcademicSnippet(references[1].snippet, references[1].title).replace(/[.!?]+$/, '')
-    : 'Evaluasi metodologis menekankan pentingnya mengendalikan variabel perancu sebelum menarik kesimpulan klinis';
+    : 'evaluasi metodologis menekankan pentingnya mengendalikan variabel perancu sebelum menarik kesimpulan klinis';
   const s3 = references[2]
     ? cleanAcademicSnippet(references[2].snippet, references[2].title).replace(/[.!?]+$/, '')
-    : 'Data akademik nasional merekomendasikan interpretasi yang proporsional sesuai karakteristik bukti primer';
+    : 'data akademik nasional merekomendasikan interpretasi yang proporsional sesuai karakteristik bukti primer';
 
   const lowerFirst = (str: string) =>
     /^[A-Z]{2,}\b/.test(str) ? str : str.charAt(0).toLowerCase() + str.slice(1);
@@ -2100,19 +2404,14 @@ export function generateVerifiedAcademicRewrite(
       stance.criticalRefIds.length > 0
         ? stance.criticalRefIds.map((id) => `[${id}]`).join('')
         : '[1][4]';
-    const correctedParagraph = `Berdasarkan penelusuran literatur akademik terhadap topik "${topicLabel}", klaim mengenai ${lowerFirst(topicLabel)} dikategorikan sebagai hipotesis spekulatif yang mendapat sorotan kritis dalam kajian tafsir dan historiografi (Ad-Dakhil / Isra'iliyat) ${critRefTag}. Secara historis dan arkeologis, literatur mencatat bahwa ${lowerFirst(s1)} [1], serta ${lowerFirst(s2)} [2]. Lebih lanjut, telaah metodologis pada rujukan ketiga menegaskan bahwa ${lowerFirst(s3)} [3], sehingga klaim spekulatif tersebut tidak dapat dijadikan kesimpulan ilmiah primer tanpa verifikasi bukti empiris yang tervalidasi [1][2][3].`;
+    const correctedParagraph = `Berdasarkan literatur [1], klaim mengenai "${topicLabel}" merupakan hipotesis spekulatif yang dikritisi dalam kajian tafsir dan historiografi (Ad-Dakhil / Isra'iliyat) ${critRefTag}, di mana ${lowerFirst(s1)} [1]. Sementara itu, kajian pada sumber [2] mencatat bahwa ${lowerFirst(s2)} [2]. Di sisi lain, penelitian [3] menyoroti bahwa ${lowerFirst(s3)} [3], sehingga klaim spekulatif tersebut tidak dapat dijadikan kesimpulan ilmiah primer tanpa verifikasi bukti empiris yang tervalidasi [1][2][3].`;
     return {
       correctedParagraph: sanitizeSynthesisParagraphs(correctedParagraph),
       apaReferences,
     };
   }
 
-  const prefixNote =
-    expectedVerdict === 'VERIFIED'
-      ? 'Berdasarkan verifikasi silang terhadap literatur primer yang terindeks, sintesis bukti empiris menunjukkan konsistensi temuan sebagai berikut:'
-      : 'Berdasarkan hasil audit verifikasi bukti primer (setelah mengeliminasi distorsi statistik, kausalitas semu, dan generalisasi berlebih), formulasi akademik yang tervalidasi adalah sebagai berikut:';
-
-  const correctedParagraph = `${prefixNote} ${s1} [1]. Temuan tersebut diperkuat oleh telaah sekunder yang mengonfirmasi bahwa ${lowerFirst(s2)} [2]. Lebih lanjut, dalam konteks kebijakan berbasis bukti di Indonesia, ${lowerFirst(s3)} [3]. Oleh karena itu, penerapan kesimpulan riset ini wajib memperhatikan batasan populasi sampel serta metodologi pada dokumen sumber asli [1][2][3].`;
+  const correctedParagraph = `Berdasarkan literatur [1], ${lowerFirst(s1)} [1]. Sementara itu, kajian pada sumber [2] mencatat bahwa ${lowerFirst(s2)} [2]. Di sisi lain, penelitian [3] menyoroti bahwa ${lowerFirst(s3)} [3], sehingga penafsiran temuan ini wajib memperhatikan batasan populasi sampel serta metodologi pada dokumen sumber asli [1][2][3].`;
 
   return {
     correctedParagraph: sanitizeSynthesisParagraphs(correctedParagraph),
@@ -2332,16 +2631,26 @@ export function generateDirectAuditPdfString(params: {
   };
 
   writeHeading('1. IDENTITAS PESERTA & KEPUTUSAN KALIBRASI VERDICT');
-  writeLine(`Nama Peserta Audit   : ${studentName} (${studentNim})`, true);
-  writeLine(`Skenario / Topik Uji : ${scenarioTitle || 'Audit Mandiri Output AI'}`);
-  writeLine(`Tanggal & ID Audit   : ${dateStr} - ${evaluation.timestamp} (${evaluation.id})`);
+  writeLine(`Nama Peserta Audit   : ${studentName} (${studentNim})`, true, 8.5);
+  writeLine(`Skenario / Topik Uji : ${scenarioTitle || 'Audit Mandiri Output AI'}`, false, 8.5);
+  writeLine(`Tanggal & ID Audit   : ${dateStr} - ${evaluation.timestamp} (${evaluation.id})`, false, 8.5);
   writeLine(
     `Keputusan Verdict    : Pilihan Peserta = ${evaluation.verdict}  |  Kunci Bukti Primer = ${evaluation.expectedVerdict}`,
-    true
+    true,
+    8.5
   );
   writeLine(
-    `Status Kalibrasi     : ${evaluation.isCalibrated ? 'TERKALIBRASI TEPAT (100% Akurat)' : 'MELESET DARI KUNCI BUKTI PRIMER'}`
+    `Status Kalibrasi     : ${evaluation.isCalibrated ? 'TERKALIBRASI TEPAT (100% Akurat)' : 'MELESET DARI KUNCI BUKTI PRIMER'}`,
+    false,
+    8.5
   );
+  if (evaluation.thesisConclusion) {
+    writeLine(
+      `Kesimpulan Tesis     : ${evaluation.thesisConclusion.statusLabel.replace(/[^\x20-\x7E]/g, '').trim()}`,
+      true,
+      8.5
+    );
+  }
 
   writeHeading('2. RINCIAN DIAGNOSTIK RUBRIK V-SCORE (4 TAHAP @ 25 POIN)');
   writeLine(
@@ -2371,7 +2680,7 @@ export function generateDirectAuditPdfString(params: {
   }
 
   writeHeading('4. PARAGRAF AKADEMIK TERKOREKSI (VERIFIED ACADEMIC REWRITER)');
-  for (const l of wrapPdfLines(evaluation.correctedAcademicParagraph, 86).slice(0, 6)) {
+  for (const l of wrapPdfLines(evaluation.correctedAcademicParagraph, 86).slice(0, 5)) {
     writeLine(l, false, 8.5);
   }
 
@@ -2385,7 +2694,7 @@ export function generateDirectAuditPdfString(params: {
   // Footer
   ops.push('0.80 0.84 0.90 RG 36 42 m 559 42 l S');
   ops.push(
-    'BT /F1 8 Tf 0.40 0.45 0.55 rg 36 28 Td (Dokumen Resmi AI Literacy Lab - Verification-First Model | Dicetak Otomatis Tanpa Ketergantungan Iframe Print) Tj ET'
+    'BT /F1 8 Tf 0.40 0.45 0.55 rg 36 28 Td (Dokumen Resmi AI Literacy Lab - Verification-First Model | Kanvas A4 Murni 595.28x841.89 pt - Lintas Perangkat HP & Desktop) Tj ET'
   );
 
   const streamContent = ops.join('\n');
@@ -2434,10 +2743,11 @@ export function downloadAuditReportAsPdf(params: {
   const a = document.createElement('a');
   a.href = url;
   a.download = `Sertifikat-Audit-A4-${safeName}-${params.evaluation.newVScore}.pdf`;
+  a.rel = 'noopener';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
 export const CHALLENGE_SCENARIOS: ChallengeScenario[] = [

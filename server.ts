@@ -1,15 +1,154 @@
 import 'dotenv/config';
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
+import { CHALLENGE_SCENARIOS, ChallengeScenario } from './src/utils/verificationLogic';
+import {
+  INITIAL_STUDENT_SCORES,
+  INITIAL_CROWDSOURCED_REPORTS,
+  StudentScoreEntry,
+  CrowdsourcedReport,
+  normalizeStudentScoreEntry,
+} from './src/utils/storageService';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const SERPER_API_KEY = '3f025a5c0bca7e27ec6d12be8a3d2a74e9c49a5b';
 const GEMINI_MODEL = 'gemini-2.5-flash';
+const DEFAULT_ROOM_CODE = 'HARFEST2026';
+const ROOM_STORE_FILE = path.join(__dirname, '.room-sync-store.json');
+
+interface ServerRoomState {
+  roomCode: string;
+  submissions: StudentScoreEntry[];
+  customScenarios: ChallengeScenario[];
+  communityReports: CrowdsourcedReport[];
+  updatedAt: string;
+}
+
+const roomMemoryStore = new Map<string, ServerRoomState>();
+
+function createDefaultRoomState(roomCode: string): ServerRoomState {
+  return {
+    roomCode,
+    submissions: INITIAL_STUDENT_SCORES.map((s, idx) => normalizeStudentScoreEntry(s, idx)),
+    customScenarios: [...CHALLENGE_SCENARIOS],
+    communityReports: [...INITIAL_CROWDSOURCED_REPORTS],
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function loadRoomsFromDisk(): void {
+  try {
+    if (fs.existsSync(ROOM_STORE_FILE)) {
+      const raw = fs.readFileSync(ROOM_STORE_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        for (const [key, val] of Object.entries(parsed)) {
+          const roomVal = val as Partial<ServerRoomState>;
+          roomMemoryStore.set(key.toUpperCase(), {
+            roomCode: key.toUpperCase(),
+            submissions: Array.isArray(roomVal.submissions)
+              ? roomVal.submissions.map((s, i) => normalizeStudentScoreEntry(s, i))
+              : [...INITIAL_STUDENT_SCORES],
+            customScenarios:
+              Array.isArray(roomVal.customScenarios) && roomVal.customScenarios.length > 0
+                ? roomVal.customScenarios
+                : [...CHALLENGE_SCENARIOS],
+            communityReports: Array.isArray(roomVal.communityReports)
+              ? roomVal.communityReports
+              : [...INITIAL_CROWDSOURCED_REPORTS],
+            updatedAt: roomVal.updatedAt || new Date().toISOString(),
+          });
+        }
+      }
+    }
+  } catch {
+    // ignore read errors and start fresh
+  }
+  if (!roomMemoryStore.has(DEFAULT_ROOM_CODE)) {
+    roomMemoryStore.set(DEFAULT_ROOM_CODE, createDefaultRoomState(DEFAULT_ROOM_CODE));
+    persistRoomsToDisk();
+  }
+}
+
+function persistRoomsToDisk(): void {
+  try {
+    const obj: Record<string, ServerRoomState> = {};
+    for (const [key, val] of roomMemoryStore.entries()) {
+      obj[key] = val;
+    }
+    fs.writeFileSync(ROOM_STORE_FILE, JSON.stringify(obj, null, 2), 'utf-8');
+  } catch {
+    // ignore write errors in read-only environments
+  }
+}
+
+function getOrInitRoom(rawCode?: string): ServerRoomState {
+  const roomCode = (rawCode || DEFAULT_ROOM_CODE).trim().toUpperCase() || DEFAULT_ROOM_CODE;
+  let room = roomMemoryStore.get(roomCode);
+  if (!room) {
+    room = createDefaultRoomState(roomCode);
+    roomMemoryStore.set(roomCode, room);
+    persistRoomsToDisk();
+  }
+  return room;
+}
+
+function upsertRoomSubmission(
+  prevScores: StudentScoreEntry[],
+  newEntry: StudentScoreEntry
+): StudentScoreEntry[] {
+  const safePrev = Array.isArray(prevScores)
+    ? prevScores.map((item, i) => normalizeStudentScoreEntry(item, i))
+    : [];
+  const normalizedNew = normalizeStudentScoreEntry(newEntry, 0);
+  const cleanName = (normalizedNew.studentName || '').trim().toLowerCase();
+  const cleanNim = (normalizedNew.studentNim || '').trim().toLowerCase();
+  const baseScenarioTitle = (normalizedNew.scenarioTitle || 'Audit Mandiri Output AI')
+    .replace(/\s*\(Percobaan\s*#\d+\)\s*$/i, '')
+    .trim();
+
+  const existingIndex = safePrev.findIndex((item) => {
+    const itemBaseTitle = (item?.scenarioTitle || '')
+      .replace(/\s*\(Percobaan\s*#\d+\)\s*$/i, '')
+      .trim()
+      .toLowerCase();
+    const sameStudent =
+      (item?.studentNim || '').trim().toLowerCase() === cleanNim ||
+      (item?.studentName || '').trim().toLowerCase() === cleanName;
+    return sameStudent && itemBaseTitle === baseScenarioTitle.toLowerCase();
+  });
+
+  if (existingIndex === -1) {
+    const firstAttemptEntry: StudentScoreEntry = {
+      ...normalizedNew,
+      attemptCount: normalizedNew.attemptCount || 1,
+      scenarioTitle: `${baseScenarioTitle} (Percobaan #${normalizedNew.attemptCount || 1})`,
+    };
+    return [firstAttemptEntry, ...safePrev];
+  }
+
+  const existing = safePrev[existingIndex];
+  const nextAttemptCount = Math.max(
+    (existing?.attemptCount || 1) + 1,
+    normalizedNew.attemptCount || 1
+  );
+  const updatedEntry: StudentScoreEntry = {
+    ...normalizedNew,
+    attemptCount: nextAttemptCount,
+    scenarioTitle: `${baseScenarioTitle} (Percobaan #${nextAttemptCount})`,
+  };
+
+  const remaining = safePrev.filter((_, idx) => idx !== existingIndex);
+  return [updatedEntry, ...remaining];
+}
+
+loadRoomsFromDisk();
 
 function getGenAIClient(): GoogleGenAI | null {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -24,6 +163,79 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json({ limit: '2mb' }));
+
+  // ============================================================================
+  // MULTI-DEVICE ROOM SYNC ENDPOINTS (Spec 1a: /api/room/:roomCode)
+  // ============================================================================
+  app.get('/api/room/:roomCode', (req, res) => {
+    const room = getOrInitRoom(req.params.roomCode);
+    return res.json(room);
+  });
+
+  app.post('/api/room/:roomCode/submission', (req, res) => {
+    const room = getOrInitRoom(req.params.roomCode);
+    const incoming = req.body?.submission || req.body;
+    if (!incoming || typeof incoming !== 'object') {
+      return res.status(400).json({ error: 'Invalid submission payload' });
+    }
+    room.submissions = upsertRoomSubmission(room.submissions, incoming as StudentScoreEntry);
+    room.updatedAt = new Date().toISOString();
+    persistRoomsToDisk();
+    return res.json(room);
+  });
+
+  app.post('/api/room/:roomCode/scenario', (req, res) => {
+    const room = getOrInitRoom(req.params.roomCode);
+    const incoming = (req.body?.scenario || req.body) as ChallengeScenario | undefined;
+    if (!incoming || !incoming.title) {
+      return res.status(400).json({ error: 'Invalid scenario payload' });
+    }
+    const existingIdx = room.customScenarios.findIndex(
+      (s) => s.id === incoming.id || s.title.toLowerCase() === incoming.title.toLowerCase()
+    );
+    if (existingIdx === -1) {
+      room.customScenarios = [incoming, ...room.customScenarios];
+    } else {
+      room.customScenarios = room.customScenarios.map((s, idx) =>
+        idx === existingIdx ? incoming : s
+      );
+    }
+    room.updatedAt = new Date().toISOString();
+    persistRoomsToDisk();
+    return res.json(room);
+  });
+
+  app.post('/api/room/:roomCode/report', (req, res) => {
+    const room = getOrInitRoom(req.params.roomCode);
+    const incoming = (req.body?.report || req.body) as CrowdsourcedReport | undefined;
+    if (!incoming || !incoming.id) {
+      return res.status(400).json({ error: 'Invalid report payload' });
+    }
+    const existingIdx = room.communityReports.findIndex((r) => r.id === incoming.id);
+    if (existingIdx === -1) {
+      room.communityReports = [incoming, ...room.communityReports];
+    } else {
+      room.communityReports = room.communityReports.map((r, idx) =>
+        idx === existingIdx ? { ...r, ...incoming } : r
+      );
+    }
+    room.updatedAt = new Date().toISOString();
+    persistRoomsToDisk();
+    return res.json(room);
+  });
+
+  app.post('/api/room/:roomCode/reset', (req, res) => {
+    const room = getOrInitRoom(req.params.roomCode);
+    const mode = req.body?.mode === 'clear' ? 'clear' : 'default';
+    if (mode === 'clear') {
+      room.submissions = [];
+    } else {
+      room.submissions = INITIAL_STUDENT_SCORES.map((s, idx) => normalizeStudentScoreEntry(s, idx));
+    }
+    room.updatedAt = new Date().toISOString();
+    persistRoomsToDisk();
+    return res.json(room);
+  });
 
   // 0. Endpoint: Server-side Serper.dev Search Proxy
   app.post('/api/serper/search', async (req, res) => {

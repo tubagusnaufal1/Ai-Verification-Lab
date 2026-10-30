@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   sanitizeSnippetText,
   cleanAcademicSnippet,
+  repairBrokenCitationsAndPunctuation,
   buildTopicRelevantSynthesis,
   filterCleanSearchResults,
   analyzeReferenceCredibility,
@@ -16,13 +17,19 @@ import {
   injectControlledHallucinationInText,
   validateAnalyticalJustification,
   evaluateVerdictAndCalculateVScore,
+  evaluateCognitiveShift,
+  tokenizeForensicHighlights,
+  getPedagogicalInterventionRecommendation,
   encodeScenarioToken,
   decodeScenarioToken,
+  generateDirectAuditPdfString,
   CHALLENGE_SCENARIOS,
   SearchReference,
 } from './verificationLogic';
 import {
   upsertStudentScoreEntry,
+  encodeSubmissionScoreToken,
+  decodeSubmissionScoreToken,
   INITIAL_STUDENT_SCORES,
 } from './storageService';
 
@@ -34,6 +41,57 @@ test('stripInlineCitationMarkers removes inline [1], [2], [3] markers cleanly', 
   assert.ok(!stripped.includes('[2]'));
   assert.ok(!stripped.includes('[3]'));
   assert.ok(stripped.includes('Berdasarkan studi IDAI tahun 2023, prevalensi diabetes meningkat tajam'));
+});
+
+test('repairBrokenCitationsAndPunctuation fixes unclosed author-year citations like (Horriyah 2011. and robotic transition phrases are never emitted', () => {
+  const broken =
+    'Berdasarkan temuan historis (Horriyah 2011. klaim lokasi Saba masih diperdebatkan.';
+  const repaired = repairBrokenCitationsAndPunctuation(broken);
+  assert.ok(repaired.includes('(Horriyah, 2011)'));
+  assert.ok(!repaired.includes('(Horriyah 2011.'));
+
+  const refs = getFallbackAcademicResults('Kerajaan Nabi Sulaiman di Indonesia');
+  const synthesis = buildTopicRelevantSynthesis('Kerajaan Nabi Sulaiman di Indonesia', refs);
+  assert.ok(!/dalam perspektif implementasi dan evaluasi faktual/i.test(synthesis));
+  assert.ok(!/pada aspek kebijakan dan epidemiologi/i.test(synthesis));
+  assert.ok(!/sejalan dengan hal tersebut, telaah pada rujukan kedua/i.test(synthesis));
+  assert.ok(!/di samping itu, bukti kelima menjelaskan bahwa/i.test(synthesis));
+  assert.ok(!/temuan tersebut diperkuat oleh literatur keenam/i.test(synthesis));
+});
+
+test('evaluateCognitiveShift, tokenizeForensicHighlights, and getPedagogicalInterventionRecommendation work accurately', () => {
+  const shift = evaluateCognitiveShift('CONVINCING', 'PARTIALLY SUPPORTED', 'PARTIALLY SUPPORTED');
+  assert.equal(shift.shiftCategory, 'FLUENCY_ILLUSION_BROKEN');
+  assert.ok(shift.headline.includes('Ilusi Kefasihan AI'));
+
+  const claimTokens = tokenizeForensicHighlights(
+    'Konsumsi boba terbukti mutlak 100% menyebabkan gagal ginjal pada seluruh remaja.',
+    'CLAIM'
+  );
+  assert.ok(
+    claimTokens.some(
+      (t) => t.highlightType === 'EXTREME_CLAIM' || t.highlightType === 'QUANTITATIVE_YEAR'
+    )
+  );
+
+  const evidenceTokens = tokenizeForensicHighlights(
+    'Studi kritis perspektif Ad-Dakhil dan Israiliyat mencatat klaim ini belum terkonfirmasi.',
+    'EVIDENCE'
+  );
+  assert.ok(
+    evidenceTokens.some(
+      (t) => t.highlightType === 'CRITICAL_STANCE' || t.highlightType === 'METHODOLOGY_SIGNAL'
+    )
+  );
+
+  const pedAdvice = getPedagogicalInterventionRecommendation([
+    { label: 'Tahap 1 · Claim & Pathology Audit', avg: 23, max: 25 },
+    { label: 'Tahap 2 · Source Verification', avg: 22, max: 25 },
+    { label: 'Tahap 3 · Verdict Accuracy', avg: 24, max: 25 },
+    { label: 'Tahap 4 · Analytical Justification', avg: 18.5, max: 25 },
+  ]);
+  assert.ok(pedAdvice.weakestStageLabel.includes('Tahap 4'));
+  assert.ok(pedAdvice.actionItems.length > 0);
 });
 
 test('cleanAcademicSnippet removes raw meta-abstract phrases and buildTopicRelevantSynthesis never appends boilerplate audit sentences', () => {
@@ -203,6 +261,8 @@ test('detectEpistemicStanceForTopic, evaluateVerdictAndCalculateVScore, and gene
     extractedClaims: claims,
     microAudits: studentMicroAudits,
     inspectedReferenceIds: [1, 2, 3, 4],
+    preAuditIntuition: 'CONVINCING',
+    thesisQuery: 'Kerajaan Nabi Sulaiman ada di Indonesia',
   });
 
   assert.equal(evaluation.stageBreakdown.stage1ClaimAudit, 25);
@@ -213,10 +273,12 @@ test('detectEpistemicStanceForTopic, evaluateVerdictAndCalculateVScore, and gene
   assert.equal(evaluation.isCalibrated, true);
   assert.ok(evaluation.thesisConclusion);
   assert.equal(evaluation.thesisConclusion?.statusCategory, 'SPEKULATIF_DIPERDEBATKAN');
+  assert.ok(evaluation.cognitiveShift);
+  assert.equal(evaluation.cognitiveShift?.shiftCategory, 'FLUENCY_ILLUSION_BROKEN');
 
   const rewrite = generateVerifiedAcademicRewrite(synthesis, sulaimanRefs, 'PARTIALLY SUPPORTED');
   assert.ok(
-    /hipotesis spekulatif yang mendapat sorotan kritis dalam kajian tafsir dan historiografi \(Ad-Dakhil \/ Isra'iliyat\)/i.test(
+    /hipotesis spekulatif yang (?:dikritisi|mendapat sorotan kritis) dalam kajian tafsir dan historiografi \(Ad-Dakhil \/ Isra'iliyat\)/i.test(
       rewrite.correctedParagraph
     )
   );
@@ -363,3 +425,46 @@ test('upsertStudentScoreEntry updates existing student row and increments attemp
   assert.equal(afterUpsert[0].attemptCount, 2);
   assert.ok(afterUpsert[0].scenarioTitle.includes('(Percobaan #2)'));
 });
+
+test('encodeSubmissionScoreToken and decodeSubmissionScoreToken round-trip student score entry for mentor import', () => {
+  const sampleScore = INITIAL_STUDENT_SCORES[0];
+  const token = encodeSubmissionScoreToken(sampleScore);
+  assert.ok(token.startsWith('AILAB-SCORE-v1:'));
+
+  const decoded = decodeSubmissionScoreToken(token);
+  assert.ok(decoded !== null);
+  assert.equal(decoded?.studentName, sampleScore.studentName);
+  assert.equal(decoded?.studentNim, sampleScore.studentNim);
+  assert.equal(decoded?.vScore, sampleScore.vScore);
+  assert.equal(decoded?.stageBreakdown.stage1ClaimAudit, sampleScore.stageBreakdown.stage1ClaimAudit);
+  assert.equal(decoded?.processLog?.stage3Verdict.chosenVerdict, sampleScore.processLog?.stage3Verdict.chosenVerdict);
+});
+
+test('generateDirectAuditPdfString generates valid PDF 1.4 with fixed standard A4 MediaBox [0 0 595.28 841.89]', () => {
+  const scenario1 = CHALLENGE_SCENARIOS[0];
+  const evalSample = evaluateVerdictAndCalculateVScore({
+    currentVScore: 80,
+    verdict: 'PARTIALLY SUPPORTED',
+    justification:
+      'Berdasarkan bukti sumber jurnal IDAI tahun 2023 dan data klinis anak, lonjakan 70 kali lipat memang sesuai statistik, namun klaim 100% disebabkan boba adalah distorsi kausalitas.',
+    claimText: scenario1.aiOutputText,
+    references: scenario1.preloadedReferences,
+    expectedVerdict: 'PARTIALLY SUPPORTED',
+    thesisQuery: 'Konsumsi minuman boba menyebabkan diabetes anak',
+  });
+
+  const pdfString = generateDirectAuditPdfString({
+    studentName: 'Budi Santoso',
+    studentNim: 'TI-2026-01',
+    scenarioTitle: 'Uji Klaim Akademik',
+    evaluation: evalSample,
+  });
+
+  assert.ok(pdfString.startsWith('%PDF-1.4'));
+  assert.ok(pdfString.includes('/MediaBox [0 0 595.28 841.89]'));
+  assert.ok(pdfString.includes('Kesimpulan Tesis'));
+  assert.ok(pdfString.includes('Kanvas A4 Murni 595.28x841.89 pt'));
+  assert.ok(pdfString.trim().endsWith('%%EOF'));
+});
+
+
